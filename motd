@@ -1,0 +1,2 @@
+FREAX 0.2 -- a Linux-like for OpenComputers.
+Type 'help' for builtins. Pipes and redirects work: ls / | grep lua
