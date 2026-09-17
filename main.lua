@@ -535,18 +535,23 @@ function ttyCursorTick()
 end
 
 -- Blocking line reader for process p (history shared, one terminal).
-local function ttyReadLine(p)
+-- secret=true: no echo, no history (password entry).
+local function ttyReadLine(p, secret)
   local g = gpu0()
   local buf = ""
   local sx, sy = termSt.cx, termSt.cy
   local w = ttySize()
   ttyHideCursor()
   local function redraw()
-    if not g then termSt.cx = sx + #buf return end
+    if not g then termSt.cx = sx + (secret and 0 or #buf) return end
     ttyHideCursor()
     g.fill(sx, sy, w - sx + 1, 1, " ")
-    g.set(sx, sy, buf)
-    termSt.cx = sx + #buf
+    if not secret then
+      g.set(sx, sy, buf)
+      termSt.cx = sx + #buf
+    else
+      termSt.cx = sx
+    end
     ttyShowCursor()
   end
   while true do
@@ -555,23 +560,25 @@ local function ttyReadLine(p)
     local name, _, char, code = table.unpack(sig, 1, sig.n)
     if name == "key_down" then
       if code == 28 then                       -- enter
-        termSt.cx = sx + #buf
+        termSt.cx = sx + (secret and 0 or #buf)
         ttyNewline()
-        termSt.hist[#termSt.hist + 1] = buf
-        termSt.histPos = #termSt.hist + 1
+        if not secret then
+          termSt.hist[#termSt.hist + 1] = buf
+          termSt.histPos = #termSt.hist + 1
+        end
         return buf
       elseif code == 14 then                   -- backspace
         if #buf > 0 then
           buf = buf:sub(1, -2)
           redraw()
         end
-      elseif code == 200 then                  -- up: older
+      elseif code == 200 and not secret then   -- up: older
         if termSt.histPos > 1 then
           termSt.histPos = termSt.histPos - 1
           buf = termSt.hist[termSt.histPos] or ""
           redraw()
         end
-      elseif code == 208 then                  -- down: newer
+      elseif code == 208 and not secret then   -- down: newer
         if termSt.histPos <= #termSt.hist then
           termSt.histPos = termSt.histPos + 1
           buf = termSt.hist[termSt.histPos] or ""
@@ -579,10 +586,14 @@ local function ttyReadLine(p)
         end
       elseif char and char > 0 then            -- printable
         buf = buf .. string.char(char)
-        ttyHideCursor()
-        if g then g.set(termSt.cx, termSt.cy, string.char(char)) end
-        termSt.cx = termSt.cx + 1
-        ttyShowCursor()
+        if secret then
+          -- swallow: cursor stays at the prompt
+        else
+          ttyHideCursor()
+          if g then g.set(termSt.cx, termSt.cy, string.char(char)) end
+          termSt.cx = termSt.cx + 1
+          ttyShowCursor()
+        end
       end
     end
   end
@@ -1294,6 +1305,7 @@ local function makeEnv(p)
   function freax.ttyGetCursor() return termSt.cx, termSt.cy end
   function freax.ttySize() return ttySize() end
   function freax.ttyReadLine() return ttyReadLine(p) end
+  function freax.ttyReadSecret() return ttyReadLine(p, true) end
 
   env.freax = freax
 
@@ -1869,15 +1881,24 @@ function K.init(a, b)
 end
 
 function K.start()
+  -- Login owns the terminal (getty-style); falls back to a bare
+  -- shell so old installs without /bin/login.lua still boot.
+  local firstPaths = { "/bin/login.lua", "/login.lua", "login.lua" }
   local shellPaths = {
     "/bin/sh.lua", "/bin/shell.lua",
     "/sh.lua", "sh.lua",
     "/bin/sh", "sh",
   }
   local pid, err
-  for _, p in ipairs(shellPaths) do
-    pid, err = K.spawn("sh", p, {})
+  for _, p in ipairs(firstPaths) do
+    pid, err = K.spawn("login", p, {})
     if pid then break end
+  end
+  if not pid then
+    for _, p in ipairs(shellPaths) do
+      pid, err = K.spawn("sh", p, {})
+      if pid then break end
+    end
   end
   if not pid then
     K.klog("no shell found: " .. tostring(err))

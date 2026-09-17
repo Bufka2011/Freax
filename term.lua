@@ -36,6 +36,7 @@ function term.read(history, dobreak, hint, pwchar, filter)
 end
 
 function term.readLine() return freax.ttyReadLine() end
+function term.readSecret() return freax.ttyReadSecret() end
 
 function term.isAvailable() return true end
 

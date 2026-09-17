@@ -155,6 +155,8 @@ local FULL = {
   entry("/lib/rs.lua", "rs.lua"),
   entry("/lib/thread.lua", "thread.lua"),
   entry("/lib/buffer.lua", "buffer.lua"),
+  entry("/lib/sha256.lua", "sha256.lua"),
+  entry("/lib/shadow.lua", "shadow.lua"),
   entry("/etc/motd", "motd"),
   entry("/bin/sh.lua", "sh.lua"),
   entry("/bin/ls.lua", "ls.lua"),
@@ -252,6 +254,8 @@ local FULL = {
   entry("/usr/man/which", "which"),
   entry("/usr/man/yes", "yes"),
   entry("/bin/install.lua", "install.lua"),
+  entry("/bin/login.lua", "login.lua"),
+  entry("/bin/passwd.lua", "passwd.lua"),
   entry("/bin/hello.lua", "hello.lua"),
 }
 local MINIMAL = {
@@ -260,6 +264,10 @@ local MINIMAL = {
   entry("/lib/term.lua", "term.lua"),
   entry("/lib/fs.lua", "fs.lua"),
   entry("/lib/shell.lua", "shell.lua"),
+  entry("/lib/sha256.lua", "sha256.lua"),
+  entry("/lib/shadow.lua", "shadow.lua"),
+  entry("/bin/login.lua", "login.lua"),
+  entry("/bin/passwd.lua", "passwd.lua"),
   entry("/bin/sh.lua", "sh.lua"),
   entry("/bin/ls.lua", "ls.lua"),
   entry("/bin/cat.lua", "cat.lua"),
