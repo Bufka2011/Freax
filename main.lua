@@ -34,7 +34,8 @@ end
 -- Shared terminal cursor (M2 compat). Single terminal, foreground-
 -- serialized input, so one global cursor is correct: a child continues
 -- where the shell left off instead of restarting at 1,1.
-local termSt = { cx = 1, cy = 1, hist = {}, histPos = 0 }
+local termSt = { cx = 1, cy = 1, hist = {}, histPos = 0,
+  blink = true, curOn = false, savedX = 0, savedY = 0, savedCh = " ", phase = -1 }
 
 ---------------------------------------------------------------
 -- VFS (M1, inspired by OpenOS lib/filesystem.lua, simplified)
@@ -388,6 +389,9 @@ end
 -- Hardware (kernel-private)
 ---------------------------------------------------------------
 
+-- forward: block-cursor primitives (defined in the tty section below)
+local ttyHideCursor, ttyShowCursor, ttyCursorTick
+
 local gpu, gpuAddr
 local function gpu0()
   if not gpu then
@@ -402,15 +406,18 @@ function K.klog(msg)
   klogPush(msg)
   local g = gpu0()
   if g then
+    ttyHideCursor()
     g.setForeground(0xFFAA00)
     g.set(1, 1, "[freax] " .. tostring(msg))
     g.setForeground(0xFFFFFF)
+    ttyShowCursor()
   end
 end
 
 function K.panic(msg)
   local g = gpu0()
   if g then
+    ttyHideCursor()
     g.setForeground(0xFF0000)
     g.set(1, 1, "KERNEL PANIC: " .. tostring(msg))
     g.setForeground(0xFFFFFF)
@@ -433,6 +440,7 @@ end
 local function ttyNewline()
   local g = gpu0()
   local w, h = ttySize()
+  ttyHideCursor()
   termSt.cx = 1
   if termSt.cy < h then
     termSt.cy = termSt.cy + 1
@@ -440,11 +448,13 @@ local function ttyNewline()
     if g then g.fill(1, 1, w, h, " ") end
     termSt.cx, termSt.cy = 1, 1
   end
+  ttyShowCursor()
 end
 
 local function ttyWrite(s)
   local g = gpu0()
   if not g then return end
+  ttyHideCursor()
   local w = ttySize()
   s = tostring(s)
   for i = 1, #s do
@@ -457,18 +467,71 @@ local function ttyWrite(s)
       if termSt.cx > w then ttyNewline() end
     end
   end
+  ttyShowCursor()
 end
 
 local function ttyClear()
   local g = gpu0()
+  ttyHideCursor()
   if g then local w, h = ttySize() g.fill(1, 1, w, h, " ") end
   termSt.cx, termSt.cy = 1, 1
+  ttyShowCursor()
 end
 
 local function ttyClearLine()
   local g = gpu0()
+  ttyHideCursor()
   if g then local w = ttySize() g.fill(1, termSt.cy, w, 1, " ") end
   termSt.cx = 1
+  ttyShowCursor()
+end
+
+-- Block cursor with blink. The underlying cell is saved via gpu.get
+-- and restored on hide/move, so output never leaves cursor artifacts.
+function ttyHideCursor()
+  if not termSt.curOn then return end
+  termSt.curOn = false
+  local g = gpu0()
+  if g then
+    pcall(g.setForeground, 0xFFFFFF)
+    pcall(g.setBackground, 0x000000)
+    pcall(g.set, termSt.savedX, termSt.savedY, termSt.savedCh)
+  end
+end
+
+function ttyShowCursor()
+  local g = gpu0()
+  if not g or not termSt.blink then return end
+  local w, h = ttySize()
+  local cx = math.max(1, math.min(termSt.cx, w))
+  local cy = math.max(1, math.min(termSt.cy, h))
+  if termSt.curOn and termSt.savedX == cx and termSt.savedY == cy then
+    return -- already shown here: no flicker
+  end
+  ttyHideCursor()
+  local ok, ch = pcall(g.get, cx, cy)
+  termSt.savedX, termSt.savedY = cx, cy
+  termSt.savedCh = (ok and type(ch) == "string") and ch or " "
+  pcall(g.setForeground, 0x000000)
+  pcall(g.setBackground, 0xFFFFFF)
+  pcall(g.set, cx, cy, termSt.savedCh)
+  pcall(g.setForeground, 0xFFFFFF)
+  pcall(g.setBackground, 0x000000)
+  termSt.curOn = true
+end
+
+-- Called every scheduler tick + after each output op. Cheap: one
+-- uptime() and a compare; touches the GPU only on phase change.
+function ttyCursorTick()
+  if not termSt.blink then
+    ttyHideCursor()
+    return
+  end
+  local phase = math.floor(computer.uptime() * 2) % 2
+  if phase ~= termSt.phase then
+    termSt.phase = phase
+    if phase == 0 then ttyShowCursor() else ttyHideCursor() end
+  end
 end
 
 -- Blocking line reader for process p (history shared, one terminal).
@@ -477,11 +540,14 @@ local function ttyReadLine(p)
   local buf = ""
   local sx, sy = termSt.cx, termSt.cy
   local w = ttySize()
+  ttyHideCursor()
   local function redraw()
     if not g then termSt.cx = sx + #buf return end
+    ttyHideCursor()
     g.fill(sx, sy, w - sx + 1, 1, " ")
     g.set(sx, sy, buf)
     termSt.cx = sx + #buf
+    ttyShowCursor()
   end
   while true do
     while #p.queue == 0 do coroutine.yield() end
@@ -513,8 +579,10 @@ local function ttyReadLine(p)
         end
       elseif char and char > 0 then            -- printable
         buf = buf .. string.char(char)
+        ttyHideCursor()
         if g then g.set(termSt.cx, termSt.cy, string.char(char)) end
         termSt.cx = termSt.cx + 1
+        ttyShowCursor()
       end
     end
   end
@@ -1213,7 +1281,14 @@ local function makeEnv(p)
   function freax.ttyClear() ttyClear() return true end
   function freax.ttyClearLine() ttyClearLine() return true end
   function freax.ttySetCursor(x, y)
+    ttyHideCursor()
     termSt.cx, termSt.cy = x, y
+    ttyShowCursor()
+    return true
+  end
+  function freax.ttySetBlink(on)
+    termSt.blink = not not on
+    if not termSt.blink then ttyHideCursor() end
     return true
   end
   function freax.ttyGetCursor() return termSt.cx, termSt.cy end
@@ -1716,6 +1791,7 @@ function K.loop()
   while true do
     local sig = table.pack(computer.pullSignal(0.05))
     local hasSig = sig.n > 0 and sig[1] ~= nil
+    ttyCursorTick() -- block-cursor blink (GPU touched only on change)
     for i = #procs, 1, -1 do
       local p = procs[i]
       if p.dead then

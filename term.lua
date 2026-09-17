@@ -52,7 +52,7 @@ end
 
 function term.bind() return true end
 
-function term.setCursorBlink(e) blink = not not e end
+function term.setCursorBlink(e) blink = not not e freax.ttySetBlink(blink) end
 function term.getCursorBlink() return blink end
 
 function term.scroll() return 0 end
