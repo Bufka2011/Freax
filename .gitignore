@@ -1,0 +1,10 @@
+# Freax dev/test leftovers (mock harnesses, shell smoke tests)
+file.txt
+skipped-unicode
+tmp/
+wtest/
+s_*.txt
+*.bak
+compat.done
+dmesg_dump.txt
+iotest.txt
