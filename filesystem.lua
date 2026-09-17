@@ -1,6 +1,7 @@
 -- filesystem: OpenOS-compatible API over the Freax kernel VFS (M2 compat).
 -- Mounts, fds and permission checks live in the kernel; this maps names.
--- Not supported: symlinks, bind mounts, unmount, lastModified dates.
+-- Not supported: bind mounts, lastModified dates.
+-- Symlinks are virtual (RAM-only, lost on reboot), like OpenOS.
 
 local fs = require("fs")
 
@@ -123,10 +124,14 @@ function filesystem.isDirectory(path)
   return r, err
 end
 
-function filesystem.isLink() return false end
+function filesystem.isLink(path)
+  local r, target = fs.isLink(path)
+  if r then return true, target end
+  return false
+end
 
-function filesystem.link()
-  return nil, "symlinks unsupported under Freax M1"
+function filesystem.link(target, linkpath)
+  return fs.link(target, linkpath)
 end
 
 function filesystem.size(path) return fs.size(path) end

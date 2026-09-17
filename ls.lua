@@ -18,7 +18,12 @@ for _, a in ipairs(args) do
     ec = 1
     io.stderr:write("ls: cannot access " .. a .. ": no such file\n")
   elseif not isDir then
-    io.write(a .. "\n")
+    local isLink, target = fs.isLink(path)
+    if opts.l and isLink then
+      io.write(string.format("l %6d %s -> %s\n", fs.size(path), a, tostring(target)))
+    else
+      io.write(a .. "\n")
+    end
   else
     local list, err = fs.list(path)
     if not list then
@@ -34,9 +39,14 @@ for _, a in ipairs(args) do
       for _, n in ipairs(names) do
         if opts.l then
           local full = fs.concat(path, n:gsub("/$", ""))
+          local isLink, target = fs.isLink(full)
           local dir = fs.isDirectory(full)
           local sz = dir and 0 or fs.size(full)
-          io.write(string.format("%s %6d %s\n", dir and "d" or "f", sz, n))
+          if isLink then
+            io.write(string.format("l %6d %s -> %s\n", sz, n, tostring(target)))
+          else
+            io.write(string.format("%s %6d %s\n", dir and "d" or "f", sz, n))
+          end
         else
           io.write(n .. "\n")
         end

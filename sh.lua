@@ -113,7 +113,8 @@ builtins["."] = builtins.source
 
 builtins.help = function()
   io.write("freax -- builtins: echo clear ps pwd cd export unset env alias unalias source jobs wait kill help exit\n")
-  io.write("files: ls cat cp mv mkdir rmdir rm touch find tree du df mount umount list\n")
+  io.write("files: ls cat cp mv mkdir rmdir rm touch find tree du df mount umount list ln\n")
+  io.write("doc: man\n")
   io.write("text: head grep wc sort less edit lua | sys: sleep uptime dmesg free\n")
   io.write("misc: which hostname date time yes mktmp reboot shutdown install\n")
   io.write("hw: components lshw address primary redstone flash label resolution\n")

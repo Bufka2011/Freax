@@ -60,17 +60,10 @@ function shell.resolveCmd(name)
 end
 
 -- foreground execute (whitespace split; real parser lands in M2 bash).
+-- Delegates to os.execute so stdio redirection is honoured.
 function shell.execute(cmd)
   if not cmd then return false end
-  local args = {}
-  for tok in tostring(cmd):gmatch("%S+") do args[#args + 1] = tok end
-  local prog = table.remove(args, 1)
-  if not prog then return false end
-  local path = shell.resolveCmd(prog)
-  local pid, err = freax.spawn(prog, path, args)
-  if not pid then return nil, err end
-  freax.wait(pid)
-  return true
+  return os.execute(tostring(cmd))
 end
 
 -- aliases: stored, honoured by the M2 shell (M1 sh ignores them).

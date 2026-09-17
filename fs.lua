@@ -40,6 +40,8 @@ function fs.list(p)
 end
 function fs.makeDirectory(p) return freax.fsMakeDir(p) end
 function fs.remove(p) return freax.fsRemove(p) end
+function fs.link(target, linkpath) return freax.fsLink(target, linkpath) end
+function fs.isLink(p) return freax.fsIsLink(p) end
 function fs.mounts() return freax.fsMounts() end
 function fs.devices() return freax.fsDevices() end
 function fs.mount(addr, path) return freax.fsMount(addr, path) end

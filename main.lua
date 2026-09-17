@@ -139,9 +139,12 @@ local function vfsMounts()
   return out
 end
 
--- read whole file via VFS (kernel-private, no fd leak)
+-- forward: symlink expansion (defined below) used by vfsReadFile
+local expandLinks
+-- read whole file via VFS (kernel-private, no fd leak; follows links)
 local function vfsReadFile(absPath)
-  local proxy, rest = vfsResolve(absPath)
+  local exp = expandLinks(absPath, true) or absPath
+  local proxy, rest = vfsResolve(exp)
   if not proxy then return nil end
   local ok, h = pcall(proxy.open, rest, "r")
   if not ok or not h then return nil end
@@ -153,6 +156,43 @@ local function vfsReadFile(absPath)
   end
   pcall(proxy.close, h)
   return data
+end
+
+---------------------------------------------------------------
+-- Virtual symlinks (M2). OC filesystems have no link concept,
+-- so like OpenOS the kernel overlays a RAM table on the namespace:
+-- links[canonicalAbsPath] = rawTarget (absolute or linkdir-relative).
+-- Lost on reboot, exactly like OpenOS virtual links.
+---------------------------------------------------------------
+
+local links = {}
+
+-- Expand links in an absolute canonical path. followFinal=false
+-- leaves a final-component link in place (lstat behavior).
+expandLinks = function(absPath, followFinal)
+  local cur = absPath
+  local seen = {}
+  for _ = 1, 40 do
+    if seen[cur] then return nil, "link cycle detected" end
+    seen[cur] = true
+    local best
+    for lp in pairs(links) do
+      local isFull = (cur == lp)
+      local isPrefix = (cur:sub(1, #lp + 1) == lp .. "/")
+      if (isPrefix or (isFull and followFinal))
+        and (not best or #lp > #best) then
+        best = lp
+      end
+    end
+    if not best then return cur end
+    local rest = cur:sub(#best + 1) -- "" or "/..."
+    local tgt = links[best]
+    local base
+    if tgt:sub(1, 1) == "/" then base = tgt
+    else base = vfsConcat(vfsDir(best), tgt) end
+    cur = vfsCanonical(base .. rest)
+  end
+  return nil, "too many levels of symbolic links"
 end
 
 ---------------------------------------------------------------
@@ -526,6 +566,13 @@ local function makeEnv(p)
 
   local freax = {}
 
+  -- snapshot of my env/cwd for a child (copy: child edits never leak up)
+  local function myInh()
+    local c = {}
+    for k, v in pairs(p.vars or {}) do c[k] = v end
+    return { vars = c, cwd = p.cwd or "/" }
+  end
+
   ---- process control ----
   function freax.getpid() return p.pid end
 
@@ -535,7 +582,7 @@ local function makeEnv(p)
   end
 
   function freax.spawn(name, path, args)
-    return K.spawn(name, path, args)
+    return K.spawn(name, path, args, nil, myInh())
   end
 
   function freax.ps()
@@ -621,21 +668,26 @@ local function makeEnv(p)
     local _, rest, mp, addr = vfsResolve(abs)
     return abs, rest, mp, addr
   end
-  local function withProxy(path)
+  local function withProxy(path, followFinal)
     local abs = vfsAbs(path, p.cwd or "/")
-    local proxy, rest = vfsResolve(abs)
-    return proxy, rest, abs
+    if followFinal == nil then followFinal = true end
+    local exp, err = expandLinks(abs, followFinal)
+    if not exp then return nil, nil, abs, err end
+    local proxy, rest = vfsResolve(exp)
+    return proxy, rest, exp
   end
   function freax.fsExists(path)
-    local proxy, rest, abs = withProxy(path)
+    -- lstat-style: a (possibly dangling) link itself exists.
+    local proxy, rest, abs, err = withProxy(path, false)
     if not proxy then return false end
     if rest == "" then return true end -- mount point
+    if links[abs] then return true end
     local ok, r = pcall(proxy.exists, rest)
     return ok and r or false
   end
   function freax.fsIsDir(path)
-    local proxy, rest = withProxy(path)
-    if not proxy then return nil, "no such file" end
+    local proxy, rest, _, err = withProxy(path)
+    if not proxy then return nil, err or "no such file" end
     if rest == "" then return true end
     local ok, r = pcall(proxy.isDirectory, rest)
     if not ok then return nil, tostring(r) end
@@ -652,8 +704,8 @@ local function makeEnv(p)
     return (ok and r) or 0
   end
   function freax.fsList(path)
-    local proxy, rest, abs = withProxy(path)
-    if not proxy then return nil, "no such directory" end
+    local proxy, rest, abs, err = withProxy(path)
+    if not proxy then return nil, err or "no such directory" end
     local ok, list = pcall(proxy.list, rest or "")
     local out = {}
     if ok and list then
@@ -675,29 +727,56 @@ local function makeEnv(p)
         end
       end
     end
+    -- add virtual symlink children living directly under abs
+    for lp in pairs(links) do
+      if vfsDir(lp) == abs then
+        local nm = vfsName(lp)
+        local dup = false
+        for _, e in ipairs(out) do
+          if e == nm or e == nm .. "/" then dup = true break end
+        end
+        if not dup then out[#out + 1] = nm end
+      end
+    end
+    -- add virtual symlink children living directly under abs
+    for lp in pairs(links) do
+      if vfsDir(lp) == abs then
+        local nm = vfsName(lp)
+        local dup = false
+        for _, e in ipairs(out) do
+          if e == nm or e == nm .. "/" then dup = true break end
+        end
+        if not dup then out[#out + 1] = nm end
+      end
+    end
     table.sort(out)
     return out
   end
   function freax.fsMakeDir(path)
-    local proxy, rest = withProxy(path)
-    if not proxy then return nil, "no such filesystem" end
+    local proxy, rest, _, err = withProxy(path, false)
+    if not proxy then return nil, err or "no such filesystem" end
     if rest == "" then return nil, "already exists" end
     local ok, r, err = pcall(proxy.makeDirectory, rest)
     if ok and r then return true end
     return nil, tostring(err or r)
   end
   function freax.fsRemove(path)
-    local proxy, rest = withProxy(path)
-    if not proxy then return nil, "no such file" end
+    -- never follows the final link: removing a link removes the link.
+    local proxy, rest, abs, err = withProxy(path, false)
+    if not proxy then return nil, err or "no such file" end
     if rest == "" then return nil, "cannot remove mount point" end
+    if links[abs] then
+      links[abs] = nil
+      return true
+    end
     local ok, r, err = pcall(proxy.remove, rest)
     if ok and r then return true end
     return nil, tostring(err or r or "failed")
   end
   function freax.fsOpen(path, mode)
     mode = tostring(mode or "r")
-    local proxy, rest = withProxy(path)
-    if not proxy then return nil, "no such filesystem" end
+    local proxy, rest, _, err = withProxy(path)
+    if not proxy then return nil, err or "no such filesystem" end
     if rest == "" then return nil, "is a directory" end
     local ok, h, err = pcall(proxy.open, rest, mode)
     if not ok or not h then return nil, tostring(err or h) end
@@ -991,8 +1070,9 @@ local function makeEnv(p)
     return kernelNewHandle(fd, p)
   end
   -- Spawn with redirected stdio: fds (pipes) or {path, mode} specs.
+  -- (myInh is defined once near the top of makeEnv.)
   function freax.spawnIO(name, path, args, inFd, outFd, errFd)
-    return K.spawn(name, path, args, { in_ = inFd, out = outFd, err = errFd })
+    return K.spawn(name, path, args, { in_ = inFd, out = outFd, err = errFd }, myInh())
   end
   function freax.myInfo()
     return { pid = p.pid, name = p.name, vars = p.vars }
@@ -1046,7 +1126,20 @@ local function makeEnv(p)
   ---- rename (same-fs proxy rename, else copy + remove) ----
   function freax.fsRename(oldPath, newPath)
     local function absOf(pp) return vfsAbs(pp, p.cwd or "/") end
-    local oAbs, nAbs = absOf(oldPath), absOf(newPath)
+    -- renaming a link renames the link itself (OpenOS semantics)
+    local oNoFollow, oErr = expandLinks(absOf(oldPath), false)
+    if not oNoFollow then return nil, oErr end
+    local nNoFollow, nErr = expandLinks(absOf(newPath), false)
+    if not nNoFollow then return nil, nErr end
+    if links[oNoFollow] then
+      links[nNoFollow] = links[oNoFollow]
+      links[oNoFollow] = nil
+      return true
+    end
+    -- overwriting a link removes the link first (no stale shadows)
+    if links[nNoFollow] then links[nNoFollow] = nil end
+    local oAbs, nAbs = oNoFollow, expandLinks(absOf(newPath), true)
+    if not nAbs then return nil, nErr end
     local oProxy, oRest = vfsResolve(oAbs)
     local nProxy, nRest = vfsResolve(nAbs)
     if not oProxy or not nProxy then return nil, "no such filesystem" end
@@ -1073,6 +1166,46 @@ local function makeEnv(p)
     pcall(nProxy.close, oh)
     pcall(oProxy.remove, oRest)
     return true
+  end
+
+  function freax.fsLink(target, linkpath)
+    if type(target) ~= "string" or target == "" then
+      return nil, "bad target"
+    end
+    local abs = vfsAbs(tostring(linkpath), p.cwd or "/")
+    local exp, err = expandLinks(abs, false)
+    if not exp then return nil, err end
+    -- the link itself must not exist (physical or virtual)
+    if links[exp] then return nil, "file already exists" end
+    local proxy, rest = vfsResolve(exp)
+    if not proxy then return nil, "no such filesystem" end
+    if rest == "" then return nil, "cannot link a mount point" end
+    local ok, already = pcall(proxy.exists, rest)
+    if ok and already then return nil, "file already exists" end
+    -- parent must be a real directory
+    local parent = vfsDir(exp)
+    local pExp, pErr = expandLinks(parent, true)
+    if not pExp then return nil, pErr end
+    local pProxy, pRest = vfsResolve(pExp)
+    local isDir = false
+    if pProxy then
+      if pRest == "" then isDir = true
+      else
+        local ok2, r2 = pcall(pProxy.isDirectory, pRest)
+        isDir = ok2 and r2
+      end
+    end
+    if not isDir then return nil, "no such directory" end
+    links[exp] = target -- stored raw; relative targets resolve at follow time
+    return true
+  end
+
+  function freax.fsIsLink(path)
+    local abs = vfsAbs(tostring(path), p.cwd or "/")
+    local exp, err = expandLinks(abs, false)
+    if not exp then return nil, err end
+    if links[exp] then return true, links[exp] end
+    return false
   end
 
   ---- shared terminal syscalls (one screen, see termSt) ----
@@ -1150,6 +1283,7 @@ local function makeEnv(p)
   p.vars = p.vars or {
     PATH = "/bin:/usr/bin:.", TMPDIR = "/tmp", TMP = "/tmp",
     HOME = "/home", SHELL = "/bin/sh",
+    MANPATH = "/usr/man", PAGER = "less",
   }
   local osT = {}
   function osT.getenv(k)
@@ -1222,7 +1356,14 @@ local function makeEnv(p)
     if not prog then return false end
     local path = resolveProg(prog)
     if not path then return nil, "command not found" end
-    local cpid = K.spawn(prog, path, args)
+    -- inherit my stdio (so `man ls > file` captures the pager too);
+    -- tty handles have no _fd and fall back to the tty, as before.
+    local function fdOf(h)
+      return (type(h) == "table" and h._fd) or nil
+    end
+    local cpid = K.spawn(prog, path, args,
+      { in_ = fdOf(p.ioT[1]), out = fdOf(p.ioT[2]), err = fdOf(p.ioT[3]) },
+      myInh())
     if not cpid then return nil, "cannot execute" end
     waitPid(cpid)
     return true
@@ -1342,7 +1483,9 @@ local function makeEnv(p)
       return nil, "bad mode"
     end
     local abs = vfsAbs(tostring(path), p.cwd or "/")
-    local proxy, rest = vfsResolve(abs)
+    local exp, expErr = expandLinks(abs, true)
+    if not exp then return nil, expErr end
+    local proxy, rest = vfsResolve(exp)
     if not proxy then return nil, "no such filesystem" end
     if rest == "" then return nil, "is a directory" end
     local ok, hnd = pcall(proxy.open, rest, mode)
@@ -1399,12 +1542,12 @@ local function makeEnv(p)
     local rfd, wfd = freax.pipe()
     local cpid
     if mode == "r" then
-      cpid = K.spawn(name, path, args, { out = wfd })
+      cpid = K.spawn(name, path, args, { out = wfd }, myInh())
       freax.fsClose(wfd)
       if not cpid then freax.fsClose(rfd) return nil, "cannot execute" end
       return kernelNewHandle(rfd, p)
     else
-      cpid = K.spawn(name, path, args, { in_ = rfd })
+      cpid = K.spawn(name, path, args, { in_ = rfd }, myInh())
       freax.fsClose(rfd)
       if not cpid then freax.fsClose(wfd) return nil, "cannot execute" end
       return kernelNewHandle(wfd, p)
@@ -1475,7 +1618,7 @@ end
 -- Process management
 ---------------------------------------------------------------
 
-function K.spawn(name, path, args, stdio)
+function K.spawn(name, path, args, stdio, inh)
   -- M1: resolve via VFS first (FHS), then legacy flat fallback.
   local src = vfsReadFile(vfsAbs(path, "/"))
   if not src then src = readFile and readFile(path) end
@@ -1492,7 +1635,9 @@ function K.spawn(name, path, args, stdio)
   local p = {
     pid = nextPid, name = name,
     queue = {}, started = false, dead = false,
-    cwd = "/",
+    -- children inherit cwd + env vars (like a real fork/exec)
+    cwd = (inh and inh.cwd) or "/",
+    vars = inh and inh.vars,
   }
   -- Optional redirected stdio for pipelines (M2): pipe fds are duped
   -- into the child; {path, mode} specs are opened independently.
@@ -1511,7 +1656,8 @@ function K.spawn(name, path, args, stdio)
         -- file fd: reopen the same path for the child (independent
         -- offset/close; avoids shared-handle refcounting)
         if e.proxy and e.path then
-          local proxy, rest = vfsResolve(e.path)
+          local exp = expandLinks(e.path, true) or e.path
+          local proxy, rest = vfsResolve(exp)
           if proxy and rest ~= "" then
             local ok, hnd = pcall(proxy.open, rest, e.mode or "r")
             if ok and hnd then
@@ -1527,6 +1673,7 @@ function K.spawn(name, path, args, stdio)
         return nil
       elseif type(spec) == "table" then
         local abs = vfsAbs(tostring(spec[1]), "/")
+        abs = expandLinks(abs, true) or abs
         local proxy, rest = vfsResolve(abs)
         if proxy and rest ~= "" then
           local ok, hnd = pcall(proxy.open, rest, spec[2] or dfltMode)
@@ -1616,6 +1763,7 @@ function K.init(a, b)
   end
   -- M1 VFS: mount boot at /, others at /mnt/xxx (like OpenOS 90_filesystem)
   mounts = {}
+  links = {} -- virtual symlinks never survive a reboot (as in OpenOS)
   if bootfs then
     vfsMount(bootfs, "/", bootaddr)
   end
