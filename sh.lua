@@ -382,7 +382,7 @@ function runLine(line, depth)
 end
 
 term.clear()
-term.writeln("FREAX 0.2 (M2) -- welcome, root")
+term.writeln("FREAX 0.5 -- welcome, root")
 do
   local motd = fs.readFile("/etc/motd")
   if motd then term.writeln(motd:gsub("\n$", "")) end

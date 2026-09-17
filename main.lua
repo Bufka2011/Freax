@@ -1789,7 +1789,7 @@ function K.init(a, b)
       end
     end
   end
-  K.klog("freax 0.1 kernel up")
+  K.klog("freax 0.5 kernel up")
 end
 
 function K.start()
