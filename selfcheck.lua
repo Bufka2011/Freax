@@ -53,7 +53,6 @@ for _, c in ipairs({"list /", "components", "lshw", "address",
   check("exec " .. c, os.execute(c) == true)
 end
 
-prog:close()
 local o = io.open("/s_compat.txt", "w")
 o:write("OK")
 o:close()

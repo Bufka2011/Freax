@@ -1582,8 +1582,10 @@ function K.loop()
           if hasSig and not p.waitingFor then p.queue[#p.queue + 1] = sig end
           ok, err = coroutine.resume(p.co)
         elseif p.waitingFor or p.pipeWait then
-          -- foreground wait / pipe block: poll every tick, consume no
-          -- input, so an interactive child owns the keyboard alone.
+          -- foreground wait / pipe block: poll every tick.
+          -- waiters still queue input (typeahead); pipe blocks don't,
+          -- so an interactive child owns the keyboard alone.
+          if hasSig and not p.pipeWait then p.queue[#p.queue + 1] = sig end
           ok, err = coroutine.resume(p.co)
         elseif hasSig then
           -- broadcast; per-tty filtering arrives with the VFS (M1)
