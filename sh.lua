@@ -383,7 +383,6 @@ function runLine(line, depth)
   return code
 end
 
-term.clear()
 term.writeln("FREAX 0.5 -- welcome, " .. (os.getenv("USER") or "root"))
 
 local function hostname()
