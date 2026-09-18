@@ -391,6 +391,8 @@ end
 
 -- forward: block-cursor primitives (defined in the tty section below)
 local ttyHideCursor, ttyShowCursor, ttyCursorTick
+-- forward: merged input take (defined with the input model below)
+local takeMerged
 
 local gpu, gpuAddr
 local function gpu0()
@@ -535,34 +537,39 @@ function ttyCursorTick()
 end
 
 -- Blocking line reader for process p (history shared, one terminal).
--- secret=true: no echo, no history (password entry).
-local function ttyReadLine(p, secret)
+-- mask (string, or true for "*"): echo mask instead of input, skip
+-- history and recall, for password fields.
+local function ttyReadLine(p, mask)
   local g = gpu0()
   local buf = ""
   local sx, sy = termSt.cx, termSt.cy
   local w = ttySize()
+  local echo = (mask == true and "*")
+    or (type(mask) == "string" and mask ~= "" and mask) or nil
   ttyHideCursor()
+  local function shown()
+    return echo and echo:rep(#buf) or buf
+  end
   local function redraw()
-    if not g then termSt.cx = sx + (secret and 0 or #buf) return end
+    if not g then termSt.cx = sx + #buf return end
     ttyHideCursor()
     g.fill(sx, sy, w - sx + 1, 1, " ")
-    if not secret then
-      g.set(sx, sy, buf)
-      termSt.cx = sx + #buf
-    else
-      termSt.cx = sx
-    end
+    g.set(sx, sy, shown())
+    termSt.cx = sx + #buf
     ttyShowCursor()
   end
   while true do
-    while #p.queue == 0 do coroutine.yield() end
-    local sig = table.remove(p.queue, 1)
+    local sig = takeMerged(p)
+    while not sig do
+      coroutine.yield()
+      sig = takeMerged(p)
+    end
     local name, _, char, code = table.unpack(sig, 1, sig.n)
     if name == "key_down" then
       if code == 28 then                       -- enter
-        termSt.cx = sx + (secret and 0 or #buf)
+        termSt.cx = sx + #buf
         ttyNewline()
-        if not secret then
+        if not echo then
           termSt.hist[#termSt.hist + 1] = buf
           termSt.histPos = #termSt.hist + 1
         end
@@ -572,13 +579,13 @@ local function ttyReadLine(p, secret)
           buf = buf:sub(1, -2)
           redraw()
         end
-      elseif code == 200 and not secret then   -- up: older
+      elseif code == 200 and not echo then     -- up: older (off in pw fields)
         if termSt.histPos > 1 then
           termSt.histPos = termSt.histPos - 1
           buf = termSt.hist[termSt.histPos] or ""
           redraw()
         end
-      elseif code == 208 and not secret then   -- down: newer
+      elseif code == 208 and not echo then     -- down: newer (off in pw fields)
         if termSt.histPos <= #termSt.hist then
           termSt.histPos = termSt.histPos + 1
           buf = termSt.hist[termSt.histPos] or ""
@@ -586,24 +593,48 @@ local function ttyReadLine(p, secret)
         end
       elseif char and char > 0 then            -- printable
         buf = buf .. string.char(char)
-        if secret then
-          -- swallow: cursor stays at the prompt
-        else
-          ttyHideCursor()
-          if g then g.set(termSt.cx, termSt.cy, string.char(char)) end
-          termSt.cx = termSt.cx + 1
-          ttyShowCursor()
-        end
+        ttyHideCursor()
+        if g then g.set(termSt.cx, termSt.cy, echo or string.char(char)) end
+        termSt.cx = termSt.cx + 1
+        ttyShowCursor()
       end
     end
   end
 end
 
--- Non-blocking queue drain shared by pullEvent/pollEvent.
+-- Input model: ONE shared keyboard queue (key_down/key_up/clipboard),
+-- like a Unix tty buffer -- whoever pulls first consumes each keystroke
+-- exactly once, so typeahead survives foreground waits but interactive
+-- children can't leave stale duplicates behind for the next reader.
+-- All other signals keep per-process broadcast queues. Global arrival
+-- order across both queues is preserved via sequence numbers.
+local keyQueue = {}
+local sigSeq = 0
+
+local function isKeySig(s)
+  return s[1] == "key_down" or s[1] == "key_up" or s[1] == "clipboard"
+end
+
+-- Non-blocking take honoring global arrival order. Returns packed sig or nil.
+takeMerged = function(p)
+  local ksig, qsig = keyQueue[1], p.queue[1]
+  if ksig and (not qsig or (ksig.seq or 0) <= (qsig.seq or 0)) then
+    table.remove(keyQueue, 1)
+    return ksig
+  elseif qsig then
+    table.remove(p.queue, 1)
+    return qsig
+  end
+  return nil
+end
+
+-- Blocking pull shared by pullEvent.
 local function procPull(p)
-  while #p.queue == 0 do coroutine.yield() end
-  local sig = table.remove(p.queue, 1)
-  return table.unpack(sig, 1, sig.n)
+  while true do
+    local sig = takeMerged(p)
+    if sig then return table.unpack(sig, 1, sig.n) end
+    coroutine.yield()
+  end
 end
 
 ---------------------------------------------------------------
@@ -702,14 +733,30 @@ local function makeEnv(p)
   -- Non-blocking drain for timeout loops (computer.pullSignal etc.).
   -- Returns nil when empty, else unpacked signal like pullEvent.
   function freax.pollEvent()
-    if #p.queue == 0 then return nil end
-    local sig = table.remove(p.queue, 1)
+    local sig = takeMerged(p)
+    if not sig then return nil end
+    return table.unpack(sig, 1, sig.n)
+  end
+
+  -- Non-destructive merged peek: lets timeout loops (sleep, timed
+  -- pulls) wait without eating keystrokes meant for someone else.
+  function freax.peekEvent()
+    local ksig, qsig = keyQueue[1], p.queue[1]
+    local sig = nil
+    if ksig and (not qsig or (ksig.seq or 0) <= (qsig.seq or 0)) then
+      sig = ksig
+    else
+      sig = qsig
+    end
+    if not sig then return nil end
     return table.unpack(sig, 1, sig.n)
   end
 
   function freax.sleep(sec)
     local deadline = computer.uptime() + (sec or 0)
-    while computer.uptime() < deadline do procPull(p) end
+    while computer.uptime() < deadline do
+      if freax.peekEvent() then coroutine.yield() else procPull(p) end
+    end
   end
 
   function freax.uptime() return computer.uptime() end
@@ -1304,8 +1351,7 @@ local function makeEnv(p)
   end
   function freax.ttyGetCursor() return termSt.cx, termSt.cy end
   function freax.ttySize() return ttySize() end
-  function freax.ttyReadLine() return ttyReadLine(p) end
-  function freax.ttyReadSecret() return ttyReadLine(p, true) end
+  function freax.ttyReadLine(mask) return ttyReadLine(p, mask) end
 
   env.freax = freax
 
@@ -1359,8 +1405,13 @@ local function makeEnv(p)
       local first = table.pack(freax.pollEvent())
       if first[1] ~= nil then return table.unpack(first, 1, first.n) end
       if computer.uptime() >= deadline then return nil end
-      -- blocks past deadline when idle (documented); signals win the race
-      return procPull(p)
+      -- wait without eating: peek, yield, re-check (shared keys stay
+      -- queued for whoever actually reads them)
+      while computer.uptime() < deadline do
+        if freax.peekEvent() then coroutine.yield()
+        else return procPull(p) end
+      end
+      return nil
     end,
     pushSignal = function() return nil, "signal injection denied under Freax" end,
     beep = function(freq, dur) return freax.beep(freq, dur) end,
@@ -1398,7 +1449,9 @@ local function makeEnv(p)
   osT.difftime = os.difftime
   function osT.sleep(t)
     local deadline = computer.uptime() + (t or 0)
-    while computer.uptime() < deadline do procPull(p) end
+    while computer.uptime() < deadline do
+      if freax.peekEvent() then coroutine.yield() else procPull(p) end
+    end
   end
   osT.remove = function(path) return freax.fsRemove(path) end
   osT.rename = function(a, b) return freax.fsRename(a, b) end
@@ -1803,6 +1856,15 @@ function K.loop()
   while true do
     local sig = table.pack(computer.pullSignal(0.05))
     local hasSig = sig.n > 0 and sig[1] ~= nil
+    if hasSig then
+      -- sequence + route: keystrokes go ONLY to the shared queue
+      -- (single consumption); everything else keeps broadcast copies.
+      sigSeq = sigSeq + 1
+      sig.seq = sigSeq
+      if isKeySig(sig) then
+        keyQueue[#keyQueue + 1] = sig
+      end
+    end
     ttyCursorTick() -- block-cursor blink (GPU touched only on change)
     for i = #procs, 1, -1 do
       local p = procs[i]
@@ -1814,17 +1876,25 @@ function K.loop()
         if not p.started then
           p.started = true
           -- don't drop input arriving on the exact start tick
-          if hasSig and not p.waitingFor then p.queue[#p.queue + 1] = sig end
+          -- (non-key only; keys wait in the shared queue)
+          if hasSig and not isKeySig(sig) and not p.waitingFor then
+            p.queue[#p.queue + 1] = sig
+          end
           ok, err = coroutine.resume(p.co)
         elseif p.waitingFor or p.pipeWait then
           -- foreground wait / pipe block: poll every tick.
-          -- waiters still queue input (typeahead); pipe blocks don't,
-          -- so an interactive child owns the keyboard alone.
-          if hasSig and not p.pipeWait then p.queue[#p.queue + 1] = sig end
+          -- waiters still queue non-key input (typeahead); pipe blocks
+          -- and all keystrokes bypass per-process queues entirely.
+          if hasSig and not isKeySig(sig) and not p.pipeWait then
+            p.queue[#p.queue + 1] = sig
+          end
           ok, err = coroutine.resume(p.co)
         elseif hasSig then
-          -- broadcast; per-tty filtering arrives with the VFS (M1)
-          p.queue[#p.queue + 1] = sig
+          -- active process: keys come from the shared queue on pull,
+          -- everything else broadcasts as before
+          if not isKeySig(sig) then
+            p.queue[#p.queue + 1] = sig
+          end
           ok, err = coroutine.resume(p.co)
         end
         if ok == false then
@@ -1881,24 +1951,25 @@ function K.init(a, b)
 end
 
 function K.start()
-  -- Login owns the terminal (getty-style); falls back to a bare
-  -- shell so old installs without /bin/login.lua still boot.
-  local firstPaths = { "/bin/login.lua", "/login.lua", "login.lua" }
+  -- login first (full installs); bare shell fallback (minimal/rescue).
+  local loginPaths = {
+    "/bin/login.lua",
+    "login.lua",
+  }
+  local pid, err
+  for _, p in ipairs(loginPaths) do
+    pid, err = K.spawn("login", p, {})
+    if pid then break end
+  end
+  if pid then return K.loop() end
   local shellPaths = {
     "/bin/sh.lua", "/bin/shell.lua",
     "/sh.lua", "sh.lua",
     "/bin/sh", "sh",
   }
-  local pid, err
-  for _, p in ipairs(firstPaths) do
-    pid, err = K.spawn("login", p, {})
+  for _, p in ipairs(shellPaths) do
+    pid, err = K.spawn("sh", p, {})
     if pid then break end
-  end
-  if not pid then
-    for _, p in ipairs(shellPaths) do
-      pid, err = K.spawn("sh", p, {})
-      if pid then break end
-    end
   end
   if not pid then
     K.klog("no shell found: " .. tostring(err))

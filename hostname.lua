@@ -3,7 +3,15 @@ local function out(s) io.write(tostring(s) .. "\n") end
 local fs = require("fs")
 
 local name = ...
+if name == "--help" or name == "-h" then
+  out("Usage: hostname [name]")
+  return
+end
 if name and name ~= "" then
+  if not name:match("%S") or name:match("%s") then
+    io.stderr:write("hostname: invalid name\n")
+    return 1
+  end
   local fd, err = fs.open("/etc/hostname", "w")
   if not fd then
     io.stderr:write("hostname: " .. tostring(err) .. "\n")

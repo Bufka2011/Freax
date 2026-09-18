@@ -26,6 +26,8 @@ for address, info in pairs(devices) do
     m[col] = math.max(m[col] or 1, (info[name:lower()] or ""):len())
   end
 end
+-- Freax deviation: never crash on an empty inventory.
+for col in ipairs(columns) do m[col] = m[col] or 1 end
 
 io.write(text.padRight("Address", 10))
 for col, name in ipairs(columns) do

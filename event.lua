@@ -99,19 +99,35 @@ function event.pullFiltered(...)
     filter = args[2]
   end
   local deadline = freax.uptime() + (seconds or math.huge)
+  -- pen: taken-but-unmatched signals. Non-matching takes must not
+  -- eat other consumers' keys from the shared queue, so they wait
+  -- here for a later matching pull.
+  event._pen = event._pen or {}
+  local pen = event._pen
+  local function matches(sig)
+    return filter == nil or filter(table.unpack(sig, 1, sig.n))
+  end
   while true do
-    local sig = pullOnce()
-    if sig then
-      if filter == nil or filter(table.unpack(sig, 1, sig.n)) then
+    for i, sig in ipairs(pen) do
+      if matches(sig) then
+        table.remove(pen, i)
         return table.unpack(sig, 1, sig.n)
       end
+    end
+    local pk = table.pack(freax.peekEvent())
+    if pk[1] ~= nil and matches(pk) then
+      local sig = pullOnce() -- takes the head we just peeked
+      if sig then
+        if matches(sig) then return table.unpack(sig, 1, sig.n) end
+        pen[#pen + 1] = sig -- raced: head changed under us, keep it
+      end
+      -- else: raced away entirely (same-process thread took it): re-loop
     else
       if freax.uptime() >= deadline then return nil end
-      local s = table.pack(freax.pullEvent())
+      local s = table.pack(freax.pullEvent()) -- blocks
       dispatch(s)
-      if filter == nil or filter(table.unpack(s, 1, s.n)) then
-        return table.unpack(s, 1, s.n)
-      end
+      if matches(s) then return table.unpack(s, 1, s.n) end
+      pen[#pen + 1] = s
       if freax.uptime() >= deadline then return nil end
     end
   end

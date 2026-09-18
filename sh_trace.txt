@@ -1,0 +1,130 @@
+lua /selfcheck.lua
+ls / | grep lua > /s_pipe.txt
+ls /nope || echo OR-WORKS > /s_or.txt
+pwd && echo AND-WORKS > /s_and.txt
+cd /nope && echo BAD > /s_bad.txt
+ls /nope 2> /s_err.txt
+ln -s /ls.lua /l1
+cat /l1 > /s_l1.txt
+ls -l /l1 > /s_ll.txt
+rm /l1
+ln -s /nope_xyz /l_d
+ls /l_d > /s_tmp.txt
+rm /l_d
+ln -s /ls.lua /l_a
+mv /l_a /l_b
+cat /l_b > /s_lmv.txt
+rm /l_b
+export MANPATH=/
+export PAGER=cat
+man ls > /s_man.txt
+export FX_T=42
+printenv FX_T > /s_inh.txt
+cd /etc
+pwd > /s_cwd.txt
+cd /
+sleep 30 &
+lua /selfcheck.lua
+ls / | grep lua > /s_pipe.txt
+ls /nope || echo OR-WORKS > /s_or.txt
+pwd && echo AND-WORKS > /s_and.txt
+cd /nope && echo BAD > /s_bad.txt
+ls /nope 2> /s_err.txt
+ln -s /ls.lua /l1
+cat /l1 > /s_l1.txt
+ls -l /l1 > /s_ll.txt
+rm /l1
+ln -s /nope_xyz /l_d
+ls /l_d > /s_tmp.txt
+rm /l_d
+ln -s /ls.lua /l_a
+mv /l_a /l_b
+cat /l_b > /s_lmv.txt
+rm /l_b
+export MANPATH=/
+export PAGER=cat
+man ls > /s_man.txt
+export FX_T=42
+printenv FX_T > /s_inh.txt
+cd /etc
+pwd > /s_cwd.txt
+cd /
+sleep 30 &
+lua /selfcheck.lua
+ls / | grep lua > /s_pipe.txt
+ls /nope || echo OR-WORKS > /s_or.txt
+pwd && echo AND-WORKS > /s_and.txt
+cd /nope && echo BAD > /s_bad.txt
+ls /nope 2> /s_err.txt
+ln -s /ls.lua /l1
+cat /l1 > /s_l1.txt
+ls -l /l1 > /s_ll.txt
+rm /l1
+ln -s /nope_xyz /l_d
+ls /l_d > /s_tmp.txt
+rm /l_d
+ln -s /ls.lua /l_a
+mv /l_a /l_b
+cat /l_b > /s_lmv.txt
+rm /l_b
+export MANPATH=/
+export PAGER=cat
+man ls > /s_man.txt
+export FX_T=42
+printenv FX_T > /s_inh.txt
+cd /etc
+pwd > /s_cwd.txt
+cd /
+sleep 30 &
+lua /selfcheck.lua
+ls / | grep lua > /s_pipe.txt
+ls /nope || echo OR-WORKS > /s_or.txt
+pwd && echo AND-WORKS > /s_and.txt
+cd /nope && echo BAD > /s_bad.txt
+ls /nope 2> /s_err.txt
+ln -s /ls.lua /l1
+cat /l1 > /s_l1.txt
+ls -l /l1 > /s_ll.txt
+rm /l1
+ln -s /nope_xyz /l_d
+ls /l_d > /s_tmp.txt
+rm /l_d
+ln -s /ls.lua /l_a
+mv /l_a /l_b
+cat /l_b > /s_lmv.txt
+rm /l_b
+export MANPATH=/
+export PAGER=cat
+man ls > /s_man.txt
+export FX_T=42
+printenv FX_T > /s_inh.txt
+cd /etc
+pwd > /s_cwd.txt
+cd /
+sleep 30 &
+lua /selfcheck.lua
+ls / | grep lua > /s_pipe.txt
+ls /nope || echo OR-WORKS > /s_or.txt
+pwd && echo AND-WORKS > /s_and.txt
+cd /nope && echo BAD > /s_bad.txt
+ls /nope 2> /s_err.txt
+ln -s /ls.lua /l1
+cat /l1 > /s_l1.txt
+ls -l /l1 > /s_ll.txt
+rm /l1
+ln -s /nope_xyz /l_d
+ls /l_d > /s_tmp.txt
+rm /l_d
+ln -s /ls.lua /l_a
+mv /l_a /l_b
+cat /l_b > /s_lmv.txt
+rm /l_b
+export MANPATH=/
+export PAGER=cat
+man ls > /s_man.txt
+export FX_T=42
+printenv FX_T > /s_inh.txt
+cd /etc
+pwd > /s_cwd.txt
+cd /
+sleep 30 &

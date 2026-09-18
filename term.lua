@@ -30,13 +30,12 @@ function term.getSize() return freax.ttySize() end
 
 -- OpenOS compat ------------------------------------------------
 function term.read(history, dobreak, hint, pwchar, filter)
-  -- history/dobreak/hint/pwchar/filter handled by kernel reader
-  -- only as plain line input in M1 (no masking/validation yet)
-  return freax.ttyReadLine()
+  -- history/dobreak/hint/filter: accepted, mostly ignored for now.
+  -- pwchar (string/true): mask echoed input, skip history (passwords).
+  return freax.ttyReadLine(pwchar)
 end
 
 function term.readLine() return freax.ttyReadLine() end
-function term.readSecret() return freax.ttyReadSecret() end
 
 function term.isAvailable() return true end
 
@@ -58,6 +57,8 @@ function term.getCursorBlink() return blink end
 
 function term.scroll() return 0 end
 
+local pullPen = {}
+
 function term.pull(...)
   local args = table.pack(...)
   local timeout
@@ -65,21 +66,31 @@ function term.pull(...)
     timeout = table.remove(args, 1)
   end
   local deadline = timeout and (freax.uptime() + timeout) or math.huge
+  local function matches(sig)
+    if #args == 0 then return true end
+    if type(args[1]) == "string" and sig[1] ~= args[1] then return false end
+    return true
+  end
   while true do
-    local sig = table.pack(freax.pollEvent())
-    if sig[1] ~= nil then
-      if #args == 0 then return table.unpack(sig, 1, sig.n) end
-      local ok = true
-      if type(args[1]) == "string" and sig[1] ~= args[1] then ok = false end
-      if ok then return table.unpack(sig, 1, sig.n) end
+    for i, sig in ipairs(pullPen) do
+      if matches(sig) then
+        table.remove(pullPen, i)
+        return table.unpack(sig, 1, sig.n)
+      end
     end
-    if freax.uptime() >= deadline then return nil end
-    sig = table.pack(freax.pullEvent())
-    if #args == 0 then return table.unpack(sig, 1, sig.n) end
-    if type(args[1]) == "string" and sig[1] ~= args[1] then
-      -- not ours; drop (single-consumer M1 terminal)
+    local pk = table.pack(freax.peekEvent())
+    if pk[1] ~= nil and matches(pk) then
+      local sig = table.pack(freax.pollEvent()) -- takes the peeked head
+      if sig[1] ~= nil then
+        if matches(sig) then return table.unpack(sig, 1, sig.n) end
+        pullPen[#pullPen + 1] = sig
+      end
     else
-      return table.unpack(sig, 1, sig.n)
+      if freax.uptime() >= deadline then return nil end
+      local sig = table.pack(freax.pullEvent()) -- blocks
+      if matches(sig) then return table.unpack(sig, 1, sig.n) end
+      if sig[1] ~= nil then pullPen[#pullPen + 1] = sig end
+      if freax.uptime() >= deadline then return nil end
     end
   end
 end

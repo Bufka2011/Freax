@@ -101,12 +101,47 @@ local function runScheduler()
       end
     end
     if not runnable then
-      -- 5. kernel block, then broadcast to every thread queue
-      local sig = table.pack(freax.pullEvent())
-      for _, t in ipairs(threads) do
-        t.queue[#t.queue + 1] = sig
+      -- 5. kernel block: take ONLY signals somebody here wants.
+      -- Anything else stays in the shared queue for other processes;
+      -- bulk-copying (like broadcast) would eat their future input.
+      local pk = table.pack(freax.peekEvent())
+      local function wants(filter)
+        return pk[1] ~= nil
+          and (filter == nil or filter(table.unpack(pk, 1, pk.n)))
       end
-      mainThread.queue[#mainThread.queue + 1] = sig
+      local interested = false
+      if pk[1] ~= nil then
+        for _, t in ipairs(threads) do
+          if t.status == "running" and t.blocked and t.waiting
+            and wants(t.waiting.filter) then
+            interested = true
+            break
+          end
+        end
+        if not interested and mainThread.waiting
+          and wants(mainThread.waiting.filter) then
+          interested = true
+        end
+      end
+      if interested then
+        local sig = table.pack(freax.pullEvent()) -- take the peeked head
+        local function matches(filter)
+          return filter == nil or filter(table.unpack(sig, 1, sig.n))
+        end
+        for _, t in ipairs(threads) do
+          if t.status == "running" and t.blocked and t.waiting
+            and matches(t.waiting.filter) then
+            t.queue[#t.queue + 1] = sig
+          end
+        end
+        if mainThread.waiting and matches(mainThread.waiting.filter) then
+          mainThread.queue[#mainThread.queue + 1] = sig
+        end
+      else
+        -- nothing here for us (or queue empty): yield until arrival.
+        -- Runs on main's stack, so the kernel resumes us per signal.
+        coroutine.yield()
+      end
     end
   end
 end
@@ -144,12 +179,15 @@ if not event._threadWrapped then
 end
 
 -- Main-side wait until cond() or timeout (pumps threads meanwhile).
+-- Registers a never-matching filter so the pump never consumes shared
+-- input on main's behalf: typed keys stay queued for whoever reads next.
 local function mainWaitUntil(cond, timeout)
   local deadline = now() + (timeout or math.huge)
+  local function never() return false end
   while true do
     if cond() then return true end
     if now() >= deadline then return nil, "thread join timed out" end
-    scheduledPull(nil, deadline)
+    scheduledPull(never, deadline)
   end
 end
 

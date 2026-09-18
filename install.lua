@@ -155,9 +155,11 @@ local FULL = {
   entry("/lib/rs.lua", "rs.lua"),
   entry("/lib/thread.lua", "thread.lua"),
   entry("/lib/buffer.lua", "buffer.lua"),
+  entry("/lib/auth.lua", "auth.lua"),
   entry("/lib/sha256.lua", "sha256.lua"),
-  entry("/lib/shadow.lua", "shadow.lua"),
   entry("/etc/motd", "motd"),
+  entry("/etc/passwd", "passwd"),
+  entry("/etc/shadow", "shadow"),
   entry("/bin/sh.lua", "sh.lua"),
   entry("/bin/ls.lua", "ls.lua"),
   entry("/bin/cat.lua", "cat.lua"),
@@ -177,6 +179,7 @@ local FULL = {
   entry("/bin/uptime.lua", "uptime.lua"),
   entry("/bin/dmesg.lua", "dmesg.lua"),
   entry("/bin/which.lua", "which.lua"),
+  entry("/bin/printenv.lua", "printenv.lua"),
   entry("/bin/hostname.lua", "hostname.lua"),
   entry("/bin/df.lua", "df.lua"),
   entry("/bin/mount.lua", "mount.lua"),
@@ -206,6 +209,11 @@ local FULL = {
   entry("/bin/pastebin.lua", "pastebin.lua"),
   entry("/bin/ln.lua", "ln.lua"),
   entry("/bin/man.lua", "man.lua"),
+  entry("/bin/login.lua", "login.lua"),
+  entry("/bin/passwd.lua", "passwd.lua"),
+  entry("/bin/su.lua", "su.lua"),
+  entry("/bin/whoami.lua", "whoami.lua"),
+  entry("/bin/adduser.lua", "adduser.lua"),
   entry("/usr/man/address", "address"),
   entry("/usr/man/alias", "alias"),
   entry("/usr/man/cat", "cat"),
@@ -254,8 +262,6 @@ local FULL = {
   entry("/usr/man/which", "which"),
   entry("/usr/man/yes", "yes"),
   entry("/bin/install.lua", "install.lua"),
-  entry("/bin/login.lua", "login.lua"),
-  entry("/bin/passwd.lua", "passwd.lua"),
   entry("/bin/hello.lua", "hello.lua"),
 }
 local MINIMAL = {
@@ -264,10 +270,6 @@ local MINIMAL = {
   entry("/lib/term.lua", "term.lua"),
   entry("/lib/fs.lua", "fs.lua"),
   entry("/lib/shell.lua", "shell.lua"),
-  entry("/lib/sha256.lua", "sha256.lua"),
-  entry("/lib/shadow.lua", "shadow.lua"),
-  entry("/bin/login.lua", "login.lua"),
-  entry("/bin/passwd.lua", "passwd.lua"),
   entry("/bin/sh.lua", "sh.lua"),
   entry("/bin/ls.lua", "ls.lua"),
   entry("/bin/cat.lua", "cat.lua"),
@@ -378,6 +380,41 @@ if bad > 0 then
   return
 end
 term.writeln("Verification passed.")
+
+if not minimal then
+  -- root home + root password (full installs boot into login)
+  if not fs.exists(tmount .. "/root") then
+    fs.makeDirectory(tmount .. "/root")
+  end
+  term.write("Set root password (empty = none, change later with passwd): ")
+  local pw1 = term.read(nil, true, nil, "*") or ""
+  if pw1 ~= "" then
+    term.write("Retype: ")
+    local pw2 = term.read(nil, true, nil, "*") or ""
+    if pw1 ~= pw2 then
+      term.writeln("Mismatch -- leaving root passwordless.")
+    else
+      -- auth lib ships on full media (this block is full-only);
+      -- fall back to passwordless rather than a homebrew hash.
+      local okAuth, auth = pcall(require, "auth")
+      if not okAuth then
+        term.writeln("No auth lib on media -- root stays passwordless.")
+      else
+        local salt = auth.genSalt()
+        local fd = fs.open(tmount .. "/etc/shadow", "w")
+        if fd then
+          fs.write(fd, "root:$" .. salt .. "$" .. auth.hash(pw1, salt) .. "\n")
+          fs.close(fd)
+          term.writeln("Root password set.")
+        else
+          term.writeln("Could not write shadow file -- root stays passwordless.")
+        end
+      end
+    end
+  else
+    term.writeln("No password -- run `passwd` after first login.")
+  end
+end
 
 -- Show what's actually on the target (screenshot this if boot fails).
 term.writeln("Target contents:")

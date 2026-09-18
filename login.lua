@@ -1,79 +1,59 @@
--- login: terminal login, getty-style (M2).
--- Owns the screen from boot: banner, user/password prompt, then
--- spawns the shell and waits. Shell exit (logout) returns here,
--- exactly like getty respawning on Linux.
--- First boot with no root password runs setup instead.
--- Only "root" exists until the user system lands; unknown names are
--- still password-prompted (and always rejected) to avoid enumeration.
-
-local term = require("term")
+-- login: console login prompt, getty-style (M2).
+-- Loops forever: prompt -> verify -> shell -> back to prompt on logout.
+-- Killing login just respawns it (started by the kernel), like init/getty.
+local auth = require("auth")
 local fs = require("fs")
 local shell = require("shell")
-local shadow = require("shadow")
+local term = require("term")
 
 local function hostname()
   local data = fs.readFile("/etc/hostname")
-  local name = data and data:match("%S+")
-  return name or "freax"
+  return (data and data:match("%S+")) or "freax"
 end
 
-local function readSecret()
-  return term.readSecret()
-end
-
-local function setupPassword()
-  term.writeln("No root password set -- creating one now.")
-  while true do
-    term.write("New root password: ")
-    local a = readSecret()
-    term.write("Retype root password: ")
-    local b = readSecret()
-    if a ~= b then
-      term.writeln("Passwords do not match, try again.")
-    else
-      shadow.set("root", a)
-      term.writeln("Root password set.")
-      return
-    end
-  end
-end
-
-local function tryLogin()
-  local host = hostname()
-  term.write(host .. " login: ")
-  local user = term.readLine()
-  if not user or user == "" then return false end
-  term.write("Password: ")
-  local pw = readSecret()
-  -- always hash even for unknown users: no user enumeration, no timing tell
-  local ok = (user == "root") and shadow.verify("root", pw or "")
-  if ok then
-    return true
-  end
-  term.writeln("Login incorrect")
-  return false
-end
-
-local function shellPath()
-  -- K.spawn resolves FHS first, flat dev layout second
-  return "/bin/sh.lua"
-end
-
-term.clear()
-term.writeln("FREAX 0.5")
 while true do
-  if not shadow.hasPassword("root") then
-    setupPassword()
+  term.write(hostname() .. " login: ")
+  local user = term.readLine() or ""
+  user = user:match("%S+") or ""
+  local entry = (user ~= "") and auth.getPasswd(user) or nil
+  -- Prompt unless this is a known account with no password (nullok):
+  -- unknown users still get a prompt (then fail) so the flow leaks
+  -- nothing about which accounts exist.
+  local pw = ""
+  local needPw = true
+  if entry then
+    local sh = auth.getShadow(user)
+    needPw = sh and not (sh.salt == "" and sh.hash == "")
   end
-  if tryLogin() then
-    local pid, err = freax.spawn("sh", shellPath(), {})
-    if not pid then
-      term.writeln("cannot start shell: " .. tostring(err))
-    else
-      freax.wait(pid)
-      term.clear() -- fresh screen for the next login, like agetty
-    end
+  if needPw then
+    term.write("Password: ")
+    pw = term.read(nil, true, nil, "*") or ""
+  end
+  local ok = entry and auth.verify(user, pw)
+  if not ok then
+    term.writeln("Login incorrect")
   else
-    freax.sleep(2) -- slow down guessing, like login(1)
+    local motd = fs.readFile("/etc/motd")
+    if motd then term.writeln(motd:gsub("\n$", "")) end
+    -- session env (throwaway: reset on next login iteration)
+    os.setenv("USER", entry.name)
+    os.setenv("LOGNAME", entry.name)
+    os.setenv("HOME", (entry.home ~= "" and entry.home) or "/")
+    local home = os.getenv("HOME")
+    if not fs.isDirectory(home) then
+      term.writeln("No home " .. home .. ", staying in /")
+      home = "/"
+      os.setenv("HOME", "/")
+    end
+    freax.setCwd(home)
+    local shellPath = (entry.shell ~= "" and entry.shell) or "/bin/sh.lua"
+    local pid = freax.spawn(entry.name .. "-sh", shellPath, {})
+    if pid then
+      freax.wait(pid) -- logout returns here
+    else
+      term.writeln("Cannot start shell " .. shellPath)
+    end
+    term.writeln("")
+    term.clear() -- fresh screen for the next login, like agetty
   end
 end

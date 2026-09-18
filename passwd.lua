@@ -1,27 +1,54 @@
--- passwd: set the root password (M2).
--- Asks for the current password first when one exists.
+-- passwd: set passwords (M2). Usage: passwd [user]
+-- No args = own password (asks current one unless unset).
+-- root may set any account without knowing the old password.
+local auth = require("auth")
+local shell = require("shell")
 local term = require("term")
-local shadow = require("shadow")
 
-if shadow.hasPassword("root") then
-  term.write("Current password: ")
-  local cur = term.readSecret()
-  if not shadow.verify("root", cur or "") then
-    term.writeln("Wrong password.")
-    return 1
+local args = shell.parse(...)
+local me = os.getenv("USER") or os.getenv("LOGNAME") or "root"
+local target = args[1] or me
+
+if not auth.getPasswd(target) then
+  io.stderr:write("passwd: unknown user " .. target .. "\n")
+  return 1
+end
+
+if target ~= me and me ~= "root" then
+  io.stderr:write("passwd: only root may change other passwords\n")
+  return 1
+end
+
+if target == me then
+  local sh = auth.getShadow(me)
+  if sh and not (sh.salt == "" and sh.hash == "") then
+    term.write("Current password: ")
+    local cur = term.read(nil, true, nil, "*") or ""
+    if not auth.verify(me, cur) then
+      io.stderr:write("passwd: incorrect password\n")
+      return 1
+    end
   end
 end
 
-while true do
-  term.write("New password: ")
-  local a = term.readSecret()
-  term.write("Retype password: ")
-  local b = term.readSecret()
-  if a ~= b then
-    term.writeln("Passwords do not match, try again.")
-  else
-    shadow.set("root", a)
-    term.writeln("Password updated.")
-    return 0
-  end
+term.write("New password: ")
+local a = term.read(nil, true, nil, "*") or ""
+term.write("Retype: ")
+local b = term.read(nil, true, nil, "*") or ""
+if a ~= b then
+  io.stderr:write("passwd: mismatch\n")
+  return 1
 end
+if a == "" then
+  io.stderr:write("passwd: empty password not allowed here (use install default)\n")
+  return 1
+end
+
+local salt = auth.genSalt()
+local ok, err = auth.setShadow(target, salt, auth.hash(a, salt))
+if not ok then
+  io.stderr:write("passwd: " .. tostring(err) .. "\n")
+  return 1
+end
+term.writeln("Password updated.")
+return 0

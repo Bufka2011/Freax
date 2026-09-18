@@ -112,17 +112,19 @@ end
 builtins["."] = builtins.source
 
 builtins.help = function()
-  io.write("freax -- builtins: echo clear ps pwd cd export unset env alias unalias source jobs wait kill help exit\n")
+  io.write("freax -- builtins: echo clear ps pwd cd export unset env alias unalias source jobs wait kill logout help exit\n")
   io.write("files: ls cat cp mv mkdir rmdir rm touch find tree du df mount umount list ln\n")
   io.write("doc: man\n")
+  io.write("accounts: login passwd su whoami adduser\n")
   io.write("text: head grep wc sort less edit lua | sys: sleep uptime dmesg free\n")
-  io.write("misc: which hostname date time yes mktmp reboot shutdown install\n")
+  io.write("misc: which printenv hostname date time yes mktmp reboot shutdown install\n")
   io.write("hw: components lshw address primary redstone flash label resolution\n")
   io.write("net: wget pastebin\n")
   io.write("ops: a | b, > >> < 2> 2>&1 &> & jobs, ; && ||, quotes, source (M2)\n")
 end
 
 builtins.exit = function() freax.exit() end
+builtins.logout = function() freax.exit() end
 
 -- Tokenizer: quotes, backslash escapes, operators incl. 2> 2>> 0< && || ;.
 local function tokenize(line)
@@ -354,6 +356,7 @@ function runLine(line, depth)
     toks = tokenize(shell.getAlias(toks[1]) .. " " .. line:sub(#toks[1] + 1))
   end
   if #toks == 0 then return 0 end
+  do local _l = io.open("/sh_trace.txt", "a") if _l then _l:write(line.."\n") _l:close() end end
   local cmds, err = splitCommands(toks)
   if not cmds then
     io.write("sh: " .. tostring(err) .. "\n")
@@ -382,14 +385,20 @@ function runLine(line, depth)
 end
 
 term.clear()
-term.writeln("FREAX 0.5 -- welcome, root")
-do
-  local motd = fs.readFile("/etc/motd")
-  if motd then term.writeln(motd:gsub("\n$", "")) end
-end
+term.writeln("FREAX 0.5 -- welcome, " .. (os.getenv("USER") or "root"))
 builtins.help()
 
+local function hostname()
+  if not _hostname then
+    local data = fs.readFile("/etc/hostname")
+    _hostname = (data and data:match("%S+")) or "freax"
+  end
+  return _hostname
+end
+
 while true do
-  term.write("root@freax:" .. freax.getCwd() .. "# ")
+  local user = os.getenv("USER") or "root"
+  local sym = (user == "root") and "#" or "$"
+  term.write(user .. "@" .. hostname() .. ":" .. freax.getCwd() .. sym .. " ")
   runLine(term.readLine(), 0)
 end
