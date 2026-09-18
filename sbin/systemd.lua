@@ -149,6 +149,9 @@ end
 
 log("systemd", "started (" .. (next(units) and #services .. " services" or "no units") .. ")")
 
+-- flush boot-time keystrokes so they don't appear as stray input at the prompt
+while freax.pollEvent() do end
+
 -- fallback: no units enabled -> boot login directly
 if not units or not next(units) then
   local fallback = { "/bin/login.lua", "/bin/sh.lua" }
