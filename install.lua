@@ -1,7 +1,6 @@
--- install: Freax installer (M1).
--- Inspired by OpenOS bin/install + lib/core/install_basics,
--- simplified to Ubuntu-Server style with a Minimal checkbox.
--- Usage: install [--minimal] [--to=ADDR]
+-- install: Freax installer.
+-- Inspired by OpenOS bin/install + lib/core/install_basics.
+-- Usage: install [--to=ADDR] [--from=ADDR]
 
 local term = require("term")
 local fs = require("fs")
@@ -9,7 +8,7 @@ local shell = require("shell")
 
 local args, opts = shell.parse(...)
 if opts.help then
-  term.writeln("Usage: install [--minimal] [--to=ADDR] [--from=ADDR]")
+  term.writeln("Usage: install [--to=ADDR] [--from=ADDR]")
   term.writeln("  Installs Freax to a hard drive.")
   return
 end
@@ -111,15 +110,6 @@ else
     local pick = ask("Install to [1]: ", "1")
     target = targets[tonumber(pick) or 1] or targets[1]
   end
-end
-
--- Minimal checkbox (Ubuntu Server style)
-local minimal = opts.minimal
-if minimal == nil then
-  local ans = ask("[ ] Minimal install? (core only) [y/N]: ", "n")
-  minimal = ans:sub(1, 1):lower() == "y"
-else
-  minimal = minimal == true or minimal == "true"
 end
 
 -- manifest: {dst, srcCandidates[]}
@@ -265,26 +255,13 @@ local FULL = {
   entry("/bin/install.lua", "install.lua"),
   entry("/bin/hello.lua", "hello.lua"),
 }
-local MINIMAL = {
-  entry("/init.lua", "init.lua"),
-  entry("/boot/kernel/main.lua", "main.lua"),
-  entry("/lib/term.lua", "term.lua"),
-  entry("/lib/fs.lua", "fs.lua"),
-  entry("/lib/shell.lua", "shell.lua"),
-  entry("/bin/sh.lua", "sh.lua"),
-  entry("/bin/ls.lua", "ls.lua"),
-  entry("/bin/cat.lua", "cat.lua"),
-  entry("/bin/reboot.lua", "reboot.lua"),
-  entry("/bin/shutdown.lua", "shutdown.lua"),
-}
-local manifest = minimal and MINIMAL or FULL
+local manifest = FULL
 
 local srcMount = (srcDev and srcDev.mount) or "/"
 local srcTag = srcDev.boot and "boot" or "installer"
 term.writeln("Source: " .. srcDev.addr:sub(1, 8) .. " (" .. srcTag .. " " .. srcMount .. ")")
 term.writeln("Target: " .. target.addr:sub(1, 8) ..
-  " label=" .. tostring(target.label or "") ..
-  (minimal and " [Minimal]" or " [Full]"))
+  " label=" .. tostring(target.label or ""))
 local okGo = ask("Install? [Y/n]: ", "y")
 if okGo:sub(1, 1):lower() ~= "y" then
   term.writeln("Cancelled.")
@@ -363,7 +340,7 @@ for _, e in ipairs(manifest) do
         term.writeln("write fail " .. e.dst .. ": " .. tostring(werr))
         fails = fails + 1
       else
-        term.writeln((minimal and "[min] " or "") .. e.dst)
+        term.writeln(e.dst)
       end
     end
   end
@@ -378,15 +355,13 @@ end
 -- Verify by reading back through the VFS (catches wrong-device writes).
 -- Without this, a silent miss ends as "no bootable medium found: /init.lua".
 local need = { "/init.lua", "/boot/kernel/main.lua", "/bin/sh.lua" }
-if not minimal then
-  -- without these a full install boots straight into demo mode
-  need[#need + 1] = "/bin/login.lua"
-  need[#need + 1] = "/lib/auth.lua"
-  need[#need + 1] = "/lib/sha256.lua"
-  need[#need + 1] = "/etc/passwd"
-  need[#need + 1] = "/etc/shadow"
-  need[#need + 1] = "/manifest"
-end
+-- without these the install boots straight into demo mode
+need[#need + 1] = "/bin/login.lua"
+need[#need + 1] = "/lib/auth.lua"
+need[#need + 1] = "/lib/sha256.lua"
+need[#need + 1] = "/etc/passwd"
+need[#need + 1] = "/etc/shadow"
+need[#need + 1] = "/manifest"
 local bad = 0
 for _, p in ipairs(need) do
   local back = fs.readFile(tmount .. p)
@@ -407,11 +382,10 @@ if bad > 0 then
 end
 term.writeln("Verification passed.")
 
-if not minimal then
-  -- root home + root password (full installs boot into login)
-  if not fs.exists(tmount .. "/root") then
-    fs.makeDirectory(tmount .. "/root")
-  end
+-- root home + root password (installs boot into login)
+if not fs.exists(tmount .. "/root") then
+  fs.makeDirectory(tmount .. "/root")
+end
   term.write("Set root password (empty = none, change later with passwd): ")
   local pw1 = term.read(nil, true, nil, "*") or ""
   if pw1 ~= "" then
@@ -440,7 +414,6 @@ if not minimal then
   else
     term.writeln("No password -- run `passwd` after first login.")
   end
-end
 
 -- Show what's actually on the target (screenshot this if boot fails).
 term.writeln("Target contents:")
