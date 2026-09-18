@@ -62,8 +62,6 @@ boot/kernel/main.lua
 # -- etc
 etc/hostname
 etc/motd
-etc/passwd
-etc/shadow
 # -- (root)
 .gitignore
 init.lua

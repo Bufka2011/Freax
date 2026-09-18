@@ -151,8 +151,6 @@ local FULL = {
   entry("/lib/auth.lua"),
   entry("/lib/sha256.lua"),
   entry("/etc/motd"),
-  entry("/etc/passwd"),
-  entry("/etc/shadow"),
   entry("/manifest"),
   entry("/bin/sh.lua"),
   entry("/bin/ls.lua"),
@@ -364,6 +362,19 @@ if fails == 0 then
   term.writeln("Copy done, verifying on target...")
 else
   term.writeln("Done with " .. fails .. " skips/fails, verifying anyway...")
+end
+
+-- Create account database on target (dev media does not carry a live DB)
+if not fs.exists(tmount .. "/etc") then fs.makeDirectory(tmount .. "/etc") end
+local pwfd = fs.open(tmount .. "/etc/passwd", "w")
+if pwfd then
+  fs.write(pwfd, "root:x:0:0:root:/root:/bin/sh.lua\n")
+  fs.close(pwfd)
+end
+local shfd = fs.open(tmount .. "/etc/shadow", "w")
+if shfd then
+  fs.write(shfd, "root::\n")
+  fs.close(shfd)
 end
 
 -- Verify by reading back through the VFS (catches wrong-device writes).
