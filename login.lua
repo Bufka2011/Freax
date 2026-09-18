@@ -15,9 +15,9 @@ term.clear() -- pristine screen: never show boot leftovers at the prompt
 
 while true do
   if not fs.exists("/etc/passwd") then
-    -- Beta/demo media: reset the boot drive to shipped files, then
+    -- Demo media: reset the boot drive to shipped files, then
     -- drop to a root setup shell. Mounts and dotfiles are spared.
-    term.writeln("Beta mode. All data will be wiped on reboot.")
+    term.writeln("Demo mode. All data will be wiped on reboot.")
     local mf = fs.readFile("/manifest")
     if not mf then
       term.writeln("No manifest -- skipping wipe.")
