@@ -71,6 +71,8 @@ mkdir.lua
 mktmp.lua
 more
 motd
+passwd
+shadow
 mount
 mount.lua
 mv
