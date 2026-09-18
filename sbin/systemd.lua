@@ -149,6 +149,18 @@ end
 
 log("systemd", "started (" .. (next(units) and #services .. " services" or "no units") .. ")")
 
+-- fallback: no units enabled -> boot login directly
+if not next(units) then
+  local fallback = { "/bin/login.lua", "/bin/sh.lua" }
+  for _, path in ipairs(fallback) do
+    local pid = freax.spawn("console", path, {})
+    if pid then
+      log("systemd", "fallback: spawned " .. path)
+      break
+    end
+  end
+end
+
 -- main loop
 while true do
   -- poll for commands
