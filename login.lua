@@ -16,11 +16,8 @@ term.clear() -- pristine screen: never show boot leftovers at the prompt
 while true do
   if not fs.exists("/etc/passwd") then
     -- Fresh/dev media with no account database: drop to a root setup
-    -- shell instead of a login that could never succeed. Create
-    -- accounts (or run the installer), then logout/reboot to log in.
-    term.writeln("No account database (/etc/passwd) -- root setup shell.")
-    term.writeln("Create /etc/passwd + /etc/shadow (see passwd seed files),")
-    term.writeln("then type `exit` to reach the login prompt.")
+    -- shell instead of a login that could never succeed.
+    term.writeln("No account database -- root setup shell.")
     os.setenv("USER", "root")
     os.setenv("LOGNAME", "root")
     os.setenv("HOME", "/")

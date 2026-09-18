@@ -385,7 +385,6 @@ end
 
 term.clear()
 term.writeln("FREAX 0.5 -- welcome, " .. (os.getenv("USER") or "root"))
-builtins.help()
 
 local function hostname()
   if not _hostname then
