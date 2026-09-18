@@ -426,6 +426,16 @@ for _, d in ipairs({ "", "/boot/kernel", "/bin", "/lib" }) do
   end
 end
 
+local newLabel = ask("Drive label [" .. tostring(target.label or "freax") .. "]: ",
+  tostring(target.label or "freax"))
+if newLabel ~= "" and newLabel ~= (target.label or "") then
+  local ok, err = freax.fsSetLabel(target.addr, newLabel)
+  if ok then
+    term.writeln("Label set to " .. newLabel)
+  else
+    term.writeln("Could not set label: " .. tostring(err))
+  end
+end
 local setboot = ask("Set boot address to target? [Y/n]: ", "y")
 if setboot:sub(1, 1):lower() == "y" then
   local ok, err = freax.setBootAddr(target.addr)
