@@ -1709,13 +1709,18 @@ local function makeEnv(p)
   env.io = ioT
 
   -- per-process module loader: /lib only, compiled in THIS env.
-  -- Repo root mirrors the installed root, so /lib hits on dev media too.
+  -- Flat fallback for old media (/term.lua, not /lib/term.lua).
   local function tryRead(path)
     local src = vfsReadFile(vfsAbs(path, "/"))
     if src then return src end
     src = readFile and readFile(path)
     if src then return src end
-    return nil
+    local base = path:match("([^/]+)$")
+    if base and base ~= path then
+      src = vfsReadFile("/" .. base)
+      if not src and readFile then src = readFile("/" .. base) or readFile(base) end
+    end
+    return src
   end
   local libs = {}
   function env.require(name)
@@ -1754,8 +1759,13 @@ end
 
 function K.spawn(name, path, args, stdio, inh)
   -- Resolve via VFS (FHS). Repo root mirrors the installed root,
-  -- so absolute paths hit on dev media too.
+  -- so absolute paths hit on dev media too. Flat fallback for old
+  -- media where files are at root (/login.lua, not /bin/login.lua).
   local src = vfsReadFile(vfsAbs(path, "/"))
+  if not src then
+    local base = path:match("([^/]+)$")
+    if base and base ~= path then src = vfsReadFile("/" .. base) end
+  end
   if not src then src = readFile and readFile(path) end
   if not src then return nil, path .. ": not found" end
   local p = {
