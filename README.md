@@ -20,7 +20,7 @@ layout.
 
 ## Status
 
-Milestone reached: **M2** (boot → kernel → VFS → shell).
+Milestone reached: **M2** (boot -> kernel -> VFS -> shell).
 
 - Kernel: scheduler, process table, syscall sandbox, VFS with mounts,
   pipes (8K buffer), virtual symlinks (RAM table, lost on reboot).
@@ -40,12 +40,9 @@ Milestone reached: **M2** (boot → kernel → VFS → shell).
 
 ## Quick start
 
-Copy the repo files to an OC disk preserving paths. Boot the computer.
+Copy the repo files to an OC disk/diskettepreserving paths. Boot the computer.
 
-- With `/etc/passwd` → login prompt (root, no password).
-- Without `/etc/passwd` → demo mode (shell with notice, no wipe).
-- Run `install` to install to a hard drive (needs a second writable HDD).
-- Run `lua /selfcheck.lua` for a dev smoke test.
+Run `install` to install to a hard drive (needs a second writable HDD).
 
 ## Requirements
 

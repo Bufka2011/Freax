@@ -1,4 +1,4 @@
-# AGENTS.md — Freax (OpenComputers Lua OS)
+# AGENTS.md - Freax (OpenComputers Lua OS)
 
 Freax is a from-scratch OpenOS-inspired OS for OpenComputers (Minecraft).
 Lua 5.2-ish (OC Lua, `bit32`). No host toolchain: no `lua`/`luac`/`luacheck`,
@@ -6,7 +6,7 @@ no CI, no package manager. Verification happens **in-game** (see below).
 
 ## Layout: repo root mirrors the installed root (`/`)
 
-- `boot/kernel/main.lua` — the kernel (~1900 lines); `init.lua` — boot entry
+- `boot/kernel/main.lua` - the kernel (~1900 lines); `init.lua` - boot entry
   (mounts VFS, hands off to kernel); `manifest` → `/manifest`
 - `lib/*.lua` → `/lib/*.lua`; `bin/*.lua` → `/bin/*.lua`
 - **extensionless files in `usr/man/`** are **man pages**, not code
@@ -18,10 +18,10 @@ no CI, no package manager. Verification happens **in-game** (see below).
 
 ## Adding a file? Update two lists
 
-1. **`manifest`** — authoritative ship list. Boot without `/etc/passwd`
+1. **`manifest`** - authoritative ship list. Boot without `/etc/passwd`
    (demo media) **deletes anything on the boot drive not listed here**
    (dotfiles and mount points spared). Add the repo-relative path.
-2. **`bin/install.lua` `FULL` table** — one `entry("<dst>")` per shipped file
+2. **`bin/install.lua` `FULL` table** - one `entry("<dst>")` per shipped file
    (source path == dst by the mirror rule), else the file never reaches the
    target and verification (`need` list) may fail.
 
@@ -47,11 +47,11 @@ no CI, no package manager. Verification happens **in-game** (see below).
 
 ## Verify in-game (nothing runs on host)
 
-- `lua /selfcheck.lua` — dev smoke test (**not installed**; runs requires,
+- `lua /selfcheck.lua` - dev smoke test (**not installed**; runs requires,
   thread join/order, symlink-cycle errors, `os.execute` spot checks).
   Fails write `/s_fail.txt` and exit 1.
 - `install` needs a second writable HDD; tmpfs targets are skipped by design
   (use `--to=ADDR` to force, `--from=ADDR` to pin source).
-- Before committing: `git status` — restore `etc/hostname` if the mock harness
+- Before committing: `git status` - restore `etc/hostname` if the mock harness
   deleted it (recurring gotcha, see log). Never commit `s_*.txt`, `*.bak`,
   `dmesg_dump.txt`, `iotest.txt` (already in `.gitignore`).
