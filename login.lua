@@ -15,9 +15,9 @@ term.clear() -- pristine screen: never show boot leftovers at the prompt
 
 while true do
   if not fs.exists("/etc/passwd") then
-    -- Live media without an installed system: present it as demo mode,
-    -- not as a missing database. Same root setup shell underneath.
-    term.writeln("Freax demo mode -- run `install` for a full system.")
+    -- Live media without an installed system: present it as demo mode.
+    -- Same root shell underneath.
+    term.writeln("Demo mode. Run install to set up this computer.")
     os.setenv("USER", "root")
     os.setenv("LOGNAME", "root")
     os.setenv("HOME", "/")
