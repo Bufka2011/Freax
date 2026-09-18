@@ -313,6 +313,7 @@ local function mkdirP(path)
 end
 
 local fails = 0
+local skipped = {} -- dst paths missing on source (stale install media)
 for _, e in ipairs(manifest) do
   -- Read from source media (srcMount), not from cwd/root.
   -- Tries FHS path then flat fallback, both under srcMount.
@@ -337,6 +338,7 @@ for _, e in ipairs(manifest) do
   end
   if not data then
     term.writeln("skip (not found on source): " .. e.dst)
+    skipped[e.dst] = true
     fails = fails + 1
   else
     local parent = fs.dir(e.dst)
@@ -390,8 +392,11 @@ for _, p in ipairs(need) do
   local back = fs.readFile(tmount .. p)
   if back and #back > 0 then
     term.writeln("  ok " .. p .. " (" .. #back .. "b)")
+  elseif skipped[p] then
+    term.writeln("  MISSING " .. p .. " (was skipped: update the install media)")
+    bad = bad + 1
   else
-    term.writeln("  MISSING " .. p)
+    term.writeln("  MISSING " .. p .. " (copy failed: target/drive issue)")
     bad = bad + 1
   end
 end
