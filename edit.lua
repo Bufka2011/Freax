@@ -74,9 +74,19 @@ local function save()
     msg = "save failed: " .. tostring(err)
     return false
   end
-  f:write(table.concat(lines, "\n"))
-  if #lines > 0 then f:write("\n") end
+  -- chunked: single giant writes risk truncation on real hardware
+  local data = table.concat(lines, "\n")
+  if #lines > 0 then data = data .. "\n" end
+  local ok, werr = true, nil
+  for i = 1, #data, 4096 do
+    local r, e = f:write(data:sub(i, i + 4095))
+    if not r then ok, werr = false, e break end
+  end
   f:close()
+  if not ok then
+    msg = "save failed: " .. tostring(werr)
+    return false
+  end
   dirty = false
   msg = "saved " .. shownName
   return true

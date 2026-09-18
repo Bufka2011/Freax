@@ -349,9 +349,20 @@ for _, e in ipairs(manifest) do
       term.writeln("write fail " .. e.dst .. ": " .. tostring(err))
       fails = fails + 1
     else
-      fs.write(fd, data)
+      -- chunked writes: single giant writes risk truncation on real
+      -- hardware (OpenOS copies in 1-4K chunks for the same reason)
+      local ok, werr = true, nil
+      for i = 1, #data, 4096 do
+        ok, werr = fs.write(fd, data:sub(i, i + 4095))
+        if not ok then break end
+      end
       fs.close(fd)
-      term.writeln((minimal and "[min] " or "") .. e.dst)
+      if not ok then
+        term.writeln("write fail " .. e.dst .. ": " .. tostring(werr))
+        fails = fails + 1
+      else
+        term.writeln((minimal and "[min] " or "") .. e.dst)
+      end
     end
   end
 end
