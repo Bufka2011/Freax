@@ -1386,10 +1386,6 @@ local function makeEnv(p)
     local data = vfsReadFile(abs)
     if not data and readFile then
       data = readFile(path)
-      if not data then
-        local base = tostring(path):match("([^/]+)$")
-        if base then data = readFile("/" .. base) or readFile(base) end
-      end
     end
     if not data then return nil, tostring(path) .. ": not found" end
     return hostLoad(data, "=" .. tostring(path), mode or "t", e or env)
@@ -1712,24 +1708,13 @@ local function makeEnv(p)
   end
   env.io = ioT
 
-  -- per-process module loader: /lib only, compiled in THIS env
-  -- tries VFS FHS path first, then flat M0 dev layout (term.lua in /)
+  -- per-process module loader: /lib only, compiled in THIS env.
+  -- Repo root mirrors the installed root, so /lib hits on dev media too.
   local function tryRead(path)
     local src = vfsReadFile(vfsAbs(path, "/"))
     if src then return src end
     src = readFile and readFile(path)
     if src then return src end
-    local base = path:match("([^/]+)$")
-    if base and base ~= path then
-      src = vfsReadFile("/" .. base)
-      if src then return src end
-      if readFile then
-        src = readFile("/" .. base)
-        if src then return src end
-        src = readFile(base)
-        if src then return src end
-      end
-    end
     return nil
   end
   local libs = {}
@@ -1742,8 +1727,6 @@ local function makeEnv(p)
     if libs[name] then return libs[name] end
     local stem = name:gsub("%.", "/")
     local src = tryRead("/lib/" .. stem .. ".lua")
-      or tryRead("/" .. stem .. ".lua")
-      or tryRead(stem .. ".lua")
     if not src then error("module not found: " .. name) end
     local fn, err = load(src, "=" .. name, "t", env)
     if not fn then error("load error in " .. name .. ": " .. tostring(err)) end
@@ -1770,18 +1753,10 @@ end
 ---------------------------------------------------------------
 
 function K.spawn(name, path, args, stdio, inh)
-  -- M1: resolve via VFS first (FHS), then legacy flat fallback.
+  -- Resolve via VFS (FHS). Repo root mirrors the installed root,
+  -- so absolute paths hit on dev media too.
   local src = vfsReadFile(vfsAbs(path, "/"))
   if not src then src = readFile and readFile(path) end
-  if not src then
-    -- flat fallback: /bin/sh.lua -> sh.lua (M0 dev layout, all files in /)
-    local base = path:match("([^/]+)$")
-    if base then
-      local v = vfsReadFile("/" .. base)
-      if v then src = v
-      elseif readFile then src = readFile("/" .. base) or readFile(base) end
-    end
-  end
   if not src then return nil, path .. ": not found" end
   local p = {
     pid = nextPid, name = name,
@@ -1963,25 +1938,10 @@ end
 
 function K.start()
   -- login first (full installs); bare shell fallback (minimal/rescue).
-  local loginPaths = {
-    "/bin/login.lua",
-    "login.lua",
-  }
   local pid, err
-  for _, p in ipairs(loginPaths) do
-    pid, err = K.spawn("login", p, {})
-    if pid then break end
-  end
+  pid, err = K.spawn("login", "/bin/login.lua", {})
   if pid then return K.loop() end
-  local shellPaths = {
-    "/bin/sh.lua", "/bin/shell.lua",
-    "/sh.lua", "sh.lua",
-    "/bin/sh", "sh",
-  }
-  for _, p in ipairs(shellPaths) do
-    pid, err = K.spawn("sh", p, {})
-    if pid then break end
-  end
+  pid, err = K.spawn("sh", "/bin/sh.lua", {})
   if not pid then
     K.klog("no shell found: " .. tostring(err))
   end

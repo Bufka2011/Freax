@@ -36,32 +36,21 @@ if not bootaddr then
                             end
 
                             local function readAll(path)
-                            -- Try exact path first, then flat fallback (M0 dev layout:
-                            -- all files in /). e.g. /lib/term.lua -> term.lua,
-                            -- /boot/kernel/main.lua -> main.lua
-                            local tries = { path }
-                            local base = path:match("([^/]+)$")
-                            if base then
-                                local flat1 = "/" .. base
-                                local flat2 = base
-                                if flat1 ~= path then tries[#tries + 1] = flat1 end
-                                if flat2 ~= path then tries[#tries + 1] = flat2 end
-                            end
-                            for _, p in ipairs(tries) do
-                                -- NOTE: OC proxies use dot-calls: fs.open(path),
-                                -- NOT fs:open(). So no self arg in pcall.
-                                local ok, handle = pcall(bootfs.open, fspath(p), "r")
-                                local h = ok and handle or nil
-                                if h then
-                                    local data = ""
-                                    while true do
-                                        local rok, chunk = pcall(bootfs.read, h, 4096)
-                                        if not rok or not chunk then break end
-                                        data = data .. chunk
-                                    end
-                                    pcall(bootfs.close, h)
-                                    return data
+                            -- Repo root mirrors the installed root (/), so the
+                            -- exact path hits on both dev and installed media.
+                            -- NOTE: OC proxies use dot-calls: fs.open(path),
+                            -- NOT fs:open(). So no self arg in pcall.
+                            local ok, handle = pcall(bootfs.open, fspath(path), "r")
+                            local h = ok and handle or nil
+                            if h then
+                                local data = ""
+                                while true do
+                                    local rok, chunk = pcall(bootfs.read, h, 4096)
+                                    if not rok or not chunk then break end
+                                    data = data .. chunk
                                 end
+                                pcall(bootfs.close, h)
+                                return data
                             end
                             return nil
                             end
@@ -74,14 +63,9 @@ if not bootaddr then
                                     local function loadModule(name)
                                     if modules[name] then return modules[name] end
                                         local stem = name:gsub("%.", "/")
-                                        local last = name:match("[^.]+$")
                                         local candidates = {
                                             "/boot/" .. stem .. ".lua",
                                             "/lib/"  .. stem .. ".lua",
-                                            "/" .. stem .. ".lua",
-                                            stem .. ".lua",
-                                            "/" .. last .. ".lua",
-                                            last .. ".lua",
                                         }
                                         for _, path in ipairs(candidates) do
                                             local data = readAll(path)

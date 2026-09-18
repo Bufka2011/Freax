@@ -39,7 +39,7 @@ check("status", thread.status(t1) == "dead")
 
 -- symlink cycles must error, never hang (ln refuses to make them,
 -- so build directly through the syscalls)
-check("link", freax.fsLink("/ls.lua", "/sc_l1"))
+check("link", freax.fsLink("/bin/ls.lua", "/sc_l1"))
 check("link-follow", (io.open("/sc_l1", "r"):read("*a") or "") ~= "")
 check("link-cycle-a", freax.fsLink("/sc_cyc2", "/sc_cyc1"))
 check("link-cycle-b", freax.fsLink("/sc_cyc1", "/sc_cyc2"))
@@ -50,7 +50,7 @@ check("cycle-errors", cycData == nil and cycErr
 check("cycle-clean1", freax.fsRemove("/sc_cyc1"))
 check("cycle-clean2", freax.fsRemove("/sc_cyc2"))
 check("unlink-keeps-target", freax.fsRemove("/sc_l1")
-  and freax.fsExists("/ls.lua"))
+  and freax.fsExists("/bin/ls.lua"))
 
 check("PATH", os.getenv("PATH") ~= nil)
 local f = io.open("/s_io.txt", "w")
