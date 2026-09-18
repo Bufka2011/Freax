@@ -558,15 +558,33 @@ local function ttyReadLine(p, mask)
   local echo = (mask == true and "*")
     or (type(mask) == "string" and mask ~= "" and mask) or nil
   ttyHideCursor()
+  -- Unicode-aware counts: #buf is bytes, but Cyrillic/CJK chars are
+  -- multi-byte UTF-8. Cursor columns need display width (wlen),
+  -- password masks need char count (len). Fall back to bytes if the
+  -- unicode lib is missing so ASCII behavior is unchanged.
+  local function bufLen()
+    if hostUnicode then
+      local ok, n = pcall(hostUnicode.len, buf)
+      if ok and type(n) == "number" then return n end
+    end
+    return #buf
+  end
+  local function bufWidth()
+    if hostUnicode then
+      local ok, n = pcall(hostUnicode.wlen, buf)
+      if ok and type(n) == "number" then return n end
+    end
+    return bufLen()
+  end
   local function shown()
-    return echo and echo:rep(#buf) or buf
+    return echo and echo:rep(bufLen()) or buf
   end
   local function redraw()
-    if not g then termSt.cx = sx + #buf return end
+    if not g then termSt.cx = sx + bufWidth() return end
     ttyHideCursor()
     g.fill(sx, sy, w - sx + 1, 1, " ")
     g.set(sx, sy, shown())
-    termSt.cx = sx + #buf
+    termSt.cx = sx + bufWidth()
     ttyShowCursor()
   end
   while true do
@@ -578,7 +596,7 @@ local function ttyReadLine(p, mask)
     local name, _, char, code = table.unpack(sig, 1, sig.n)
     if name == "key_down" then
       if code == 28 then                       -- enter
-        termSt.cx = sx + #buf
+        termSt.cx = sx + bufWidth()
         ttyNewline()
         if not echo then
           termSt.hist[#termSt.hist + 1] = buf
@@ -587,7 +605,16 @@ local function ttyReadLine(p, mask)
         return buf
       elseif code == 14 then                   -- backspace
         if #buf > 0 then
-          buf = buf:sub(1, -2)
+          -- drop one unicode char, not one byte (else Cyrillic splits)
+          local done = false
+          if hostUnicode then
+            local okL, ulen = pcall(hostUnicode.len, buf)
+            if okL and type(ulen) == "number" and ulen > 0 then
+              local okS, nb = pcall(hostUnicode.sub, buf, 1, ulen - 1)
+              if okS and type(nb) == "string" then buf = nb done = true end
+            end
+          end
+          if not done then buf = buf:sub(1, -2) end
           redraw()
         end
       elseif code == 200 and not echo then     -- up: older (off in pw fields)
@@ -602,12 +629,24 @@ local function ttyReadLine(p, mask)
           buf = termSt.hist[termSt.histPos] or ""
           redraw()
         end
-      elseif char and char > 0 then            -- printable
-        buf = buf .. string.char(char)
-        ttyHideCursor()
-        if g then g.set(termSt.cx, termSt.cy, echo or string.char(char)) end
-        termSt.cx = termSt.cx + 1
-        ttyShowCursor()
+      elseif type(char) == "number" and char > 0 then -- printable
+        -- string.char (0-255) throws on Cyrillic/CJK codepoints and some
+        -- emulator key events; unicode.char covers full Unicode -> UTF-8.
+        local okCh, chStr = false, nil
+        if hostUnicode then okCh, chStr = pcall(hostUnicode.char, char) end
+        if okCh and type(chStr) == "string" and chStr ~= "" then
+          buf = buf .. chStr
+          ttyHideCursor()
+          if g then g.set(termSt.cx, termSt.cy, echo or chStr) end
+          local adv = 1
+          if hostUnicode then
+            local okW, cw = pcall(hostUnicode.wlen, chStr)
+            if okW and type(cw) == "number" and cw > 0 then adv = cw end
+          end
+          termSt.cx = termSt.cx + adv
+          ttyShowCursor()
+        end
+        -- undecodable char: ignore the keystroke instead of killing sh
       end
     end
   end

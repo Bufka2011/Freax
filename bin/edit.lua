@@ -8,7 +8,22 @@
 local fs = require("fs")
 local shell = require("shell")
 local keyboard = require("keyboard")
+local uni = require("unicode")
 local K = keyboard.keys
+
+-- string.char (0-255) throws on Cyrillic/CJK codepoints; unicode.char
+-- covers full Unicode -> UTF-8. Returns nil for undecodable input so the
+-- keystroke is ignored instead of killing the editor.
+local function toChar(char)
+  if type(char) ~= "number" or char <= 0 then return nil end
+  if type(uni) ~= "table" or type(uni.char) ~= "function" then
+    if char >= 0 and char <= 255 then return string.char(char) end
+    return nil
+  end
+  local ok, s = pcall(uni.char, char)
+  if ok and type(s) == "string" and s ~= "" then return s end
+  return nil
+end
 
 -- nano-style keybinds: action -> list of {code=}/ {char=} matchers.
 -- (OpenOS edit reads these from /etc/edit.cfg; Freax fixes nano set.)
@@ -189,12 +204,24 @@ while true do
         msg = "cancelled"
       elseif matchBind("backspace", char, code) then
         findBuf = findBuf:sub(1, -2)
-      elseif char and char >= 32 and char ~= 127 then
-        findBuf = findBuf .. string.char(char)
+      elseif type(char) == "number" and char >= 32 and char ~= 127 then
+        local ins = toChar(char)
+        if ins then findBuf = findBuf .. ins end
       end
       draw()
     elseif mode == "quit" then
-      local c = char and string.char(char):lower() or ""
+      local c = ""
+      do
+        local s = toChar(char)
+        if s then
+          if type(uni) == "table" and type(uni.lower) == "function" then
+            local okL, low = pcall(uni.lower, s)
+            c = (okL and type(low) == "string") and low or s:lower()
+          else
+            c = s:lower()
+          end
+        end
+      end
       if c == "y" then
         if save() then freax.ttyClear() return end
         mode = "edit"
@@ -308,12 +335,15 @@ while true do
         mode, findBuf = "find", ""
       end
       draw()
-    elseif char and char >= 32 and char ~= 127 then
-      lines[cy] = lines[cy]:sub(1, cx - 1) ..
-        string.char(char) .. lines[cy]:sub(cx)
-      cx, dirty = cx + 1, true
-      cutting = false
-      draw()
+    elseif type(char) == "number" and char >= 32 and char ~= 127 then
+      local ins2 = toChar(char)
+      if ins2 then
+        lines[cy] = lines[cy]:sub(1, cx - 1) ..
+          ins2 .. lines[cy]:sub(cx)
+        cx, dirty = cx + #ins2, true
+        cutting = false
+        draw()
+      end
     end
   end
 end
