@@ -47,6 +47,7 @@ bin/shutdown.lua
 bin/sleep.lua
 bin/sort.lua
 bin/su.lua
+bin/systemctl.lua
 bin/time.lua
 bin/touch.lua
 bin/tree.lua
@@ -62,6 +63,8 @@ boot/kernel/main.lua
 # -- etc
 etc/hostname
 etc/motd
+# -- etc/systemd
+etc/systemd/console.unit
 # -- (root)
 .gitignore
 init.lua
@@ -96,6 +99,10 @@ lib/uuid.lua
 lib/vt100.lua
 # -- (root)
 manifest
+README.md
+# -- sbin
+sbin/systemd.lua
+# -- (root)
 selfcheck.lua
 # -- usr/man
 usr/man/address
@@ -145,3 +152,5 @@ usr/man/userdel
 usr/man/wget
 usr/man/which
 usr/man/yes
+# -- var/log/systemd
+var/log/systemd/.gitkeep

@@ -1426,7 +1426,7 @@ local function makeEnv(p)
 
   -- os: per-process env vars + clock + VFS-backed remove/rename.
   p.vars = p.vars or {
-    PATH = "/bin:/usr/bin:.", TMPDIR = "/tmp", TMP = "/tmp",
+    PATH = "/sbin:/bin:/usr/bin:.", TMPDIR = "/tmp", TMP = "/tmp",
     HOME = "/home", SHELL = "/bin/sh",
     MANPATH = "/usr/man", PAGER = "less",
   }
@@ -1937,13 +1937,17 @@ function K.init(a, b)
 end
 
 function K.start()
-  -- login first (full installs); bare shell fallback (minimal/rescue).
+  -- systemd first, then login, then bare shell.
   local pid, err
-  pid, err = K.spawn("login", "/bin/login.lua", {})
-  if pid then return K.loop() end
-  pid, err = K.spawn("sh", "/bin/sh.lua", {})
+  pid, err = K.spawn("systemd", "/sbin/systemd.lua", {})
   if not pid then
-    K.klog("no shell found: " .. tostring(err))
+    pid, err = K.spawn("login", "/bin/login.lua", {})
+  end
+  if not pid then
+    pid, err = K.spawn("sh", "/bin/sh.lua", {})
+  end
+  if not pid then
+    K.klog("no service manager or shell found: " .. tostring(err))
   end
   return K.loop()
 end

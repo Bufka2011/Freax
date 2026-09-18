@@ -255,6 +255,10 @@ local FULL = {
   entry("/usr/man/yes"),
   entry("/bin/install.lua"),
   entry("/bin/hello.lua"),
+  entry("/bin/systemctl.lua"),
+  entry("/sbin/systemd.lua"),
+  entry("/etc/systemd/console.unit"),
+  entry("/var/log/systemd/.gitkeep"),
 }
 local manifest = FULL
 

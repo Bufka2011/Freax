@@ -6,9 +6,12 @@ no CI, no package manager. Verification happens **in-game** (see below).
 
 ## Layout: repo root mirrors the installed root (`/`)
 
-- `boot/kernel/main.lua` - the kernel (~1900 lines); `init.lua` - boot entry
+- `boot/kernel/main.lua` - the kernel (~1950 lines); `init.lua` - boot entry
   (mounts VFS, hands off to kernel); `manifest` → `/manifest`
-- `lib/*.lua` → `/lib/*.lua`; `bin/*.lua` → `/bin/*.lua`
+- `lib/*.lua` → `/lib/*.lua`; `bin/*.lua` → `/bin/*.lua`; `sbin/*.lua` → `/sbin/*.lua`
+- **Service manager**: `/sbin/systemd.lua` (daemon), `/bin/systemctl.lua` (CLI),
+  units in `/etc/systemd/*.unit`. systemd is PID 1 (first process spawned by
+  kernel). Falls back to login then shell if missing.
 - **extensionless files in `usr/man/`** are **man pages**, not code
 - `etc/{motd,passwd,shadow,hostname}` → `/etc/` (hostname: local-only, not installed).
   Dev media carries live account DB so it boots into login (root, no password).
@@ -34,8 +37,8 @@ no CI, no package manager. Verification happens **in-game** (see below).
   Everything goes through `freax.*` syscalls or `require("fs"|"shell"|"term"|…)`.
 - OC filesystem proxies use **dot-calls**: `fs.open(path)`, never `fs:open()`.
 - Symlinks are a kernel RAM table (`links`), **lost on reboot**; cycles must error, never hang.
-- `os.execute`/`io.popen`/`sh` resolve via `PATH` (`/bin` + `.lua` suffix probing).
-- `K.start` boots `/bin/login.lua`, falling back to `/bin/sh.lua`.
+- `os.execute`/`io.popen`/`sh` resolve via `PATH` (`/sbin:/bin` + `.lua` suffix probing).
+- `K.start` boots `/sbin/systemd.lua`, falling back to `/bin/login.lua`, then `/bin/sh.lua`.
 
 ## Low-RAM discipline (real hardware OOMs)
 

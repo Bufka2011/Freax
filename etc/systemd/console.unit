@@ -1,0 +1,8 @@
+[Unit]
+Description=Console login
+After=filesystem
+
+[Service]
+Exec=/bin/login.lua
+Restart=always
+Enabled=yes
