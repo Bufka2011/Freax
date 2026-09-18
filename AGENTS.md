@@ -10,13 +10,11 @@ no CI, no package manager. Verification happens **in-game** (see below).
   (mounts VFS, hands off to kernel); `manifest` → `/manifest`
 - `lib/*.lua` → `/lib/*.lua`; `bin/*.lua` → `/bin/*.lua`
 - **extensionless files in `usr/man/`** are **man pages**, not code
-- `etc/{motd,passwd,shadow,hostname}` → `/etc/` (hostname: local-only, not installed)
+- `etc/{motd,passwd,shadow,hostname}` → `/etc/` (hostname: local-only, not installed).
+  Dev media carries live account DB so it boots into login (root, no password).
+  Media without `/etc/passwd` triggers demo mode (notice + shell, no wipe).
 - Root-level `selfcheck.lua` (dev smoke test) and `.gitignore` are dev-only:
   protected from the demo wipe via `manifest` but not installed.
-
-`require(name)` loads `/lib/<name>.lua` only (per-process env).
-`K.spawn` resolves absolute FHS paths; both work on dev media because the
-dev tree *is* the FHS tree. Do not reintroduce flat-layout fallbacks.
 
 ## Adding a file? Update two lists
 

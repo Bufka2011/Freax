@@ -398,6 +398,47 @@ if bad > 0 then
 end
 term.writeln("Verification passed.")
 
+-- Preserve /home/ from source to target (user files survive install)
+if fs.exists("/home") then
+  term.writeln("Copying /home/ to target...")
+  local stack = { "/home" }
+  while #stack > 0 do
+    local dir = table.remove(stack)
+    local list = fs.list(dir)
+    if list then
+      for _, name in ipairs(list) do
+        if name ~= "." and name ~= ".." then
+          local isDir = name:sub(-1) == "/"
+          local base = isDir and name:sub(1, -2) or name
+          local full = dir .. "/" .. base
+          local dst = tmount .. full
+          if isDir then
+            if not fs.exists(dst) then fs.makeDirectory(dst) end
+            stack[#stack + 1] = full
+          else
+            local infd, rerr = fs.open(full, "r")
+            if infd then
+              local outfd, werr = fs.open(dst, "w")
+              if outfd then
+                while true do
+                  local chunk = fs.read(infd, 4096)
+                  if not chunk then break end
+                  local ok, e = fs.write(outfd, chunk)
+                  if not ok then break end
+                end
+                fs.close(infd); fs.close(outfd)
+              else
+                fs.close(infd)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  term.writeln("/home/ copied.")
+end
+
 -- root home + root password (installs boot into login)
 if not fs.exists(tmount .. "/root") then
   fs.makeDirectory(tmount .. "/root")

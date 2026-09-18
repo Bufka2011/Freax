@@ -1,7 +1,5 @@
-# Freax shipped-file manifest. Boot without /etc/passwd (demo media)
-# deletes anything on the boot drive that is not listed here (dotfiles
-# and mount points are always spared). Repo root mirrors the installed
-# root (/), so entries are target-relative paths. ADD NEW FILES TO THIS LIST.
+# Freax shipped-file manifest. Repo root mirrors the installed
+# root (/), so entries are target-relative paths. ADD NEW FILES.
 # -- bin
 bin/address.lua
 bin/adduser.lua
