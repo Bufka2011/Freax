@@ -356,7 +356,6 @@ function runLine(line, depth)
     toks = tokenize(shell.getAlias(toks[1]) .. " " .. line:sub(#toks[1] + 1))
   end
   if #toks == 0 then return 0 end
-  do local _l = io.open("/sh_trace.txt", "a") if _l then _l:write(line.."\n") _l:close() end end
   local cmds, err = splitCommands(toks)
   if not cmds then
     io.write("sh: " .. tostring(err) .. "\n")
