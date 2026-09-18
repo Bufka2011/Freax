@@ -189,7 +189,6 @@ local fails = 0
 local skipped = {} -- dst paths missing on source (stale install media)
 for _, e in ipairs(manifest) do
   if SKIP_INSTALL[e.dst] then
-    term.writeln("skip (not installed): " .. e.dst)
   else
   -- Stream from source media (srcMount), not from cwd/root.
   -- Source media mirrors the installed root, so each dst is also the
@@ -214,7 +213,6 @@ for _, e in ipairs(manifest) do
     if fs.exists(cand) then srcPath = cand break end
   end
   if not srcPath then
-    term.writeln("skip (not found on source): " .. e.dst)
     skipped[e.dst] = true
     fails = fails + 1
   else
