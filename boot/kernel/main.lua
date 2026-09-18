@@ -1947,17 +1947,25 @@ function K.init(a, b)
 end
 
 function K.start()
-  -- systemd first, then login, then bare shell.
   local pid, err
+  K.klog("trying /sbin/systemd.lua")
   pid, err = K.spawn("systemd", "/sbin/systemd.lua", {})
-  if not pid then
+  if pid then
+    K.klog("systemd started (pid " .. pid .. ")")
+  else
+    K.klog("systemd not found (" .. tostring(err) .. "), trying login")
     pid, err = K.spawn("login", "/bin/login.lua", {})
-  end
-  if not pid then
-    pid, err = K.spawn("sh", "/bin/sh.lua", {})
-  end
-  if not pid then
-    K.klog("no service manager or shell found: " .. tostring(err))
+    if pid then
+      K.klog("login started (pid " .. pid .. ")")
+    else
+      K.klog("login not found (" .. tostring(err) .. "), trying sh")
+      pid, err = K.spawn("sh", "/bin/sh.lua", {})
+      if pid then
+        K.klog("sh started (pid " .. pid .. ")")
+      else
+        K.klog("no shell: " .. tostring(err))
+      end
+    end
   end
   return K.loop()
 end
