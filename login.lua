@@ -11,6 +11,8 @@ local function hostname()
   return (data and data:match("%S+")) or "freax"
 end
 
+term.clear() -- pristine screen: never show boot leftovers at the prompt
+
 while true do
   term.write(hostname() .. " login: ")
   local user = term.readLine() or ""

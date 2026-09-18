@@ -21,20 +21,16 @@ if not bootaddr then
 
             local bootfs = component.proxy(bootaddr)
 
-            -- Diagnostics: show what the kernel actually sees.
+            -- Clear the screen for a clean handoff; the kernel and
+            -- login draw everything from here (see dmesg if needed).
             do
                 local gpuaddr = component.list("gpu", true)()
                 if gpuaddr then
-                    local gpu = component.proxy(gpuaddr)
-                    local w, h = gpu.getResolution()
-                    gpu.setResolution(w, h)
-                    gpu.fill(1, 1, w, h, " ")
-                    gpu.set(1, 1, "freax: boot fs = " .. bootaddr:sub(1, 8))
-                    local y = 2
-                    for _, name in ipairs(bootfs.list("") or {}) do
-                        gpu.set(1, y, "  " .. name)
-                        y = y + 1
-                        if y > h then break end
+                    local ok, gpu = pcall(component.proxy, gpuaddr)
+                    if ok and gpu then
+                        local w, h = gpu.getResolution()
+                        gpu.setResolution(w, h)
+                        gpu.fill(1, 1, w, h, " ")
                             end
                             end
                             end
