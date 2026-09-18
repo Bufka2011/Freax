@@ -13,7 +13,9 @@ no CI. Updates ship via `bin/apt.lua` (`apt update`/`upgrade` from
 - `lib/*.lua` → `/lib/*.lua`; `bin/*.lua` → `/bin/*.lua`; `sbin/*.lua` → `/sbin/*.lua`
 - **Service manager**: `/sbin/systemd.lua` (daemon), `/bin/systemctl.lua` (CLI),
   units in `/etc/systemd/*.unit`. systemd is PID 1 (first process spawned by
-  kernel). Falls back to login then shell if missing.
+  kernel). Falls back to login then shell if missing. IPC via command files in
+  `/run/systemd/ctl.*`, responses in `/run/systemd/rsp.*`. systemd mounts tmpfs
+  at `/run/` if available.
 - **extensionless files in `usr/man/`** are **man pages**, not code
 - `etc/{motd,passwd,shadow,hostname}` → `/etc/` (hostname: local-only, not installed).
   Dev media carries live account DB so it boots into login (root, no password).
@@ -24,11 +26,12 @@ no CI. Updates ship via `bin/apt.lua` (`apt update`/`upgrade` from
 ## Adding a file? Update one list
 
 - **`manifest`** - single-source ship list (repo-relative paths; repo root
-  mirrors the installed root). It drives three things: the demo-mode wipe
-  guard (boot without `/etc/passwd` **deletes anything on the boot drive
-  not listed here**, dotfiles and mount points spared), `bin/install.lua`
-  (parses `/manifest` off the source media at runtime), and `bin/apt.lua`
-  upgrades (fetches each entry from the update source). Just add the path.
+  mirrors the installed root). It drives three things: the demo-mode boot
+  (boot without `/etc/passwd` protects any file **not listed here** from
+  hypothetical wipes by skipping the wipe code entirely — demo just shows a
+  notice + shell), `bin/install.lua` (parses `/manifest` off the source media
+  at runtime), and `bin/apt.lua` upgrades (fetches each entry from the update
+  source). Just add the path.
 - Never-installed entries live in `SKIP_INSTALL` (`bin/install.lua`) and
   `SKIP_DEV` (`bin/apt.lua`): `.gitignore`, `README.md`, `selfcheck.lua`,
   plus local-only `/etc/hostname`. Never-shipped account DB
@@ -38,6 +41,10 @@ no CI. Updates ship via `bin/apt.lua` (`apt update`/`upgrade` from
 
 - Processes are coroutines + private `_ENV`. Only yield points: `freax.wait`,
   `freax.pullEvent`/`pollEvent`, `ttyReadLine`, `freax.exit`, sleeps.
+- **Scheduler resumes every process every tick** (0.05s), not just on signal
+  arrival. This ensures daemons like systemd make progress even on idle systems.
+  A process that yields without awaiting a signal is immediately eligible again
+  next tick.
 - No ambient hardware authority: `component` is a stub that **errors**;
   `computer` is an info-only subset (`pushSignal` denied, no `debug`/`loadstring`/`_G`/global `require`).
   Everything goes through `freax.*` syscalls or `require("fs"|"shell"|"term"|…)`.
