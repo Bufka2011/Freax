@@ -160,6 +160,7 @@ local FULL = {
   entry("/etc/motd", "motd"),
   entry("/etc/passwd", "passwd"),
   entry("/etc/shadow", "shadow"),
+  entry("/manifest", "manifest"),
   entry("/bin/sh.lua", "sh.lua"),
   entry("/bin/ls.lua", "ls.lua"),
   entry("/bin/cat.lua", "cat.lua"),
@@ -364,6 +365,15 @@ end
 -- Verify by reading back through the VFS (catches wrong-device writes).
 -- Without this, a silent miss ends as "no bootable medium found: /init.lua".
 local need = { "/init.lua", "/boot/kernel/main.lua", "/bin/sh.lua" }
+if not minimal then
+  -- without these a full install boots straight into demo mode
+  need[#need + 1] = "/bin/login.lua"
+  need[#need + 1] = "/lib/auth.lua"
+  need[#need + 1] = "/lib/sha256.lua"
+  need[#need + 1] = "/etc/passwd"
+  need[#need + 1] = "/etc/shadow"
+  need[#need + 1] = "/manifest"
+end
 local bad = 0
 for _, p in ipairs(need) do
   local back = fs.readFile(tmount .. p)
