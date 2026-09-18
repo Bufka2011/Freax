@@ -64,7 +64,7 @@ check("kill-unknown", freax.kill(99999) == nil)
 
 for _, c in ipairs({"list /", "components", "lshw", "address",
   "primary gpu", "redstone", "flash", "label /", "resolution",
-  "wget", "pastebin", "dmesg", "df", "mount"}) do
+  "wget", "pastebin", "dmesg", "df", "mount", "apt version"}) do
   check("exec " .. c, os.execute(c) == true)
 end
 

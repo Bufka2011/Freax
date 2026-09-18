@@ -3,6 +3,7 @@
 # -- bin
 bin/address.lua
 bin/adduser.lua
+bin/apt.lua
 bin/cat.lua
 bin/components.lua
 bin/cp.lua
@@ -63,11 +64,14 @@ boot/kernel/main.lua
 # -- etc
 etc/hostname
 etc/motd
+# -- etc/apt
+etc/apt/sources.list
 # -- etc/systemd
 etc/systemd/console.unit
 # -- (root)
 .gitignore
 init.lua
+VERSION
 # -- lib
 lib/auth.lua
 lib/buffer.lua
@@ -107,6 +111,7 @@ selfcheck.lua
 # -- usr/man
 usr/man/address
 usr/man/alias
+usr/man/apt
 usr/man/cat
 usr/man/cd
 usr/man/clear

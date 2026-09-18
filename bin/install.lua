@@ -113,157 +113,48 @@ else
   end
 end
 
--- manifest: {dst, srcCandidates[]}
+-- Single-source file list: the install manifest IS /manifest on the source
+-- media (the same file `apt upgrade` pulls from). Adding a file means
+-- editing `manifest` only -- there is no second hardcoded list.
 -- Repo root mirrors the installed root (/), so each dst doubles as its
--- own source path on the install media.
-local function entry(dst)
+-- own source path on the install media: {dst, srcs={dst}}.
+-- Never installed: dev-only wipe-guard entries plus local-only config.
+local SKIP_INSTALL = {
+  ["/.gitignore"] = true,
+  ["/README.md"] = true,
+  ["/selfcheck.lua"] = true,
+  ["/etc/hostname"] = true, -- local-only, per machine
+}
+local function manifestEntry(dst)
   return { dst = dst, srcs = { dst } }
 end
-local FULL = {
-  entry("/init.lua"),
-  entry("/boot/kernel/main.lua"),
-  entry("/lib/term.lua"),
-  entry("/lib/fs.lua"),
-  entry("/lib/shell.lua"),
-  entry("/lib/event.lua"),
-  entry("/lib/keyboard.lua"),
-  entry("/lib/tty.lua"),
-  entry("/lib/filesystem.lua"),
-  entry("/lib/component.lua"),
-  entry("/lib/sides.lua"),
-  entry("/lib/serialization.lua"),
-  entry("/lib/uuid.lua"),
-  entry("/lib/text.lua"),
-  entry("/lib/transforms.lua"),
-  entry("/lib/colors.lua"),
-  entry("/lib/vt100.lua"),
-  entry("/lib/note.lua"),
-  entry("/lib/package.lua"),
-  entry("/lib/io.lua"),
-  entry("/lib/os.lua"),
-  entry("/lib/pipe.lua"),
-  entry("/lib/process.lua"),
-  entry("/lib/internet.lua"),
-  entry("/lib/eeprom.lua"),
-  entry("/lib/rs.lua"),
-  entry("/lib/thread.lua"),
-  entry("/lib/buffer.lua"),
-  entry("/lib/auth.lua"),
-  entry("/lib/sha256.lua"),
-  entry("/etc/motd"),
-  entry("/manifest"),
-  entry("/bin/sh.lua"),
-  entry("/bin/ls.lua"),
-  entry("/bin/cat.lua"),
-  entry("/bin/cp.lua"),
-  entry("/bin/mv.lua"),
-  entry("/bin/mkdir.lua"),
-  entry("/bin/rm.lua"),
-  entry("/bin/touch.lua"),
-  entry("/bin/pwd.lua"),
-  entry("/bin/head.lua"),
-  entry("/bin/grep.lua"),
-  entry("/bin/wc.lua"),
-  entry("/bin/sort.lua"),
-  entry("/bin/du.lua"),
-  entry("/bin/tree.lua"),
-  entry("/bin/sleep.lua"),
-  entry("/bin/uptime.lua"),
-  entry("/bin/dmesg.lua"),
-  entry("/bin/which.lua"),
-  entry("/bin/printenv.lua"),
-  entry("/bin/hostname.lua"),
-  entry("/bin/df.lua"),
-  entry("/bin/mount.lua"),
-  entry("/bin/umount.lua"),
-  entry("/bin/lua.lua"),
-  entry("/bin/date.lua"),
-  entry("/bin/free.lua"),
-  entry("/bin/time.lua"),
-  entry("/bin/yes.lua"),
-  entry("/bin/mktmp.lua"),
-  entry("/bin/rmdir.lua"),
-  entry("/bin/find.lua"),
-  entry("/bin/less.lua"),
-  entry("/bin/edit.lua"),
-  entry("/bin/reboot.lua"),
-  entry("/bin/shutdown.lua"),
-  entry("/bin/components.lua"),
-  entry("/bin/lshw.lua"),
-  entry("/bin/address.lua"),
-  entry("/bin/primary.lua"),
-  entry("/bin/label.lua"),
-  entry("/bin/resolution.lua"),
-  entry("/bin/redstone.lua"),
-  entry("/bin/flash.lua"),
-  entry("/bin/list.lua"),
-  entry("/bin/wget.lua"),
-  entry("/bin/pastebin.lua"),
-  entry("/bin/ln.lua"),
-  entry("/bin/man.lua"),
-  entry("/bin/login.lua"),
-  entry("/bin/passwd.lua"),
-  entry("/bin/su.lua"),
-  entry("/bin/whoami.lua"),
-  entry("/bin/adduser.lua"),
-  entry("/usr/man/address"),
-  entry("/usr/man/alias"),
-  entry("/usr/man/cat"),
-  entry("/usr/man/cd"),
-  entry("/usr/man/clear"),
-  entry("/usr/man/cp"),
-  entry("/usr/man/date"),
-  entry("/usr/man/df"),
-  entry("/usr/man/dmesg"),
-  entry("/usr/man/echo"),
-  entry("/usr/man/edit"),
-  entry("/usr/man/grep"),
-  entry("/usr/man/head"),
-  entry("/usr/man/hostname"),
-  entry("/usr/man/install"),
-  entry("/usr/man/label"),
-  entry("/usr/man/less"),
-  entry("/usr/man/ln"),
-  entry("/usr/man/ls"),
-  entry("/usr/man/lshw"),
-  entry("/usr/man/lua"),
-  entry("/usr/man/man"),
-  entry("/usr/man/mkdir"),
-  entry("/usr/man/more"),
-  entry("/usr/man/mount"),
-  entry("/usr/man/mv"),
-  entry("/usr/man/pastebin"),
-  entry("/usr/man/primary"),
-  entry("/usr/man/pwd"),
-  entry("/usr/man/rc"),
-  entry("/usr/man/reboot"),
-  entry("/usr/man/redstone"),
-  entry("/usr/man/resolution"),
-  entry("/usr/man/rm"),
-  entry("/usr/man/rmdir"),
-  entry("/usr/man/set"),
-  entry("/usr/man/sh"),
-  entry("/usr/man/shutdown"),
-  entry("/usr/man/umount"),
-  entry("/usr/man/unalias"),
-  entry("/usr/man/unset"),
-  entry("/usr/man/uptime"),
-  entry("/usr/man/useradd"),
-  entry("/usr/man/userdel"),
-  entry("/usr/man/wget"),
-  entry("/usr/man/which"),
-  entry("/usr/man/yes"),
-  entry("/bin/install.lua"),
-  entry("/bin/hello.lua"),
-  entry("/bin/systemctl.lua"),
-  entry("/sbin/systemd.lua"),
-  entry("/etc/systemd/console.unit"),
-  entry("/var/log/systemd/.gitkeep"),
-}
-local manifest = FULL
+-- Parsed from the source media once srcMount is known (below).
+local manifest = {}
+local function loadManifest(srcMountPath)
+  local mpath = (srcMountPath ~= "/"
+    and srcMountPath .. "/manifest") or "/manifest"
+  local data = fs.readFile(mpath)
+  if not data then return {} end
+  local out = {}
+  for line in (data .. "\n"):gmatch("(.-)\n") do
+    line = line:match("^%s*(.-)%s*$")
+    if line ~= "" and line:sub(1, 1) ~= "#" then
+      if line:sub(1, 1) ~= "/" then line = "/" .. line end
+      out[#out + 1] = manifestEntry(line)
+    end
+  end
+  return out
+end
+-- (retired hardcoded FULL table: /manifest on the source media is now the
+-- single file list, loaded below once srcMount is known.)
 
 local srcMount = (srcDev and srcDev.mount) or "/"
 local srcTag = srcDev.boot and "boot" or "installer"
+manifest = loadManifest(srcMount)
+if #manifest == 0 then
+  term.writeln("install: cannot read manifest on source (" .. srcMount .. ")")
+  return
+end
 term.writeln("Source: " .. srcDev.addr:sub(1, 8) .. " (" .. srcTag .. " " .. srcMount .. ")")
 term.writeln("Target: " .. target.addr:sub(1, 8) ..
   " label=" .. tostring(target.label or ""))
@@ -297,6 +188,9 @@ end
 local fails = 0
 local skipped = {} -- dst paths missing on source (stale install media)
 for _, e in ipairs(manifest) do
+  if SKIP_INSTALL[e.dst] then
+    term.writeln("skip (not installed): " .. e.dst)
+  else
   -- Stream from source media (srcMount), not from cwd/root.
   -- Source media mirrors the installed root, so each dst is also the
   -- source path (prefixed with the source mount when it isn't /).
@@ -360,6 +254,7 @@ for _, e in ipairs(manifest) do
       end
     end
   end
+  end
 end
 
 if fails == 0 then
@@ -391,6 +286,7 @@ need[#need + 1] = "/lib/sha256.lua"
 need[#need + 1] = "/etc/passwd"
 need[#need + 1] = "/etc/shadow"
 need[#need + 1] = "/manifest"
+need[#need + 1] = "/VERSION"
 local bad = 0
 for _, p in ipairs(need) do
   -- size check, not full read: readFile on 66K main.lua doubles RAM
@@ -466,8 +362,8 @@ end
     if pw1 ~= pw2 then
       term.writeln("Mismatch -- leaving root passwordless.")
     else
-      -- auth lib ships on full media (this block is full-only);
-      -- fall back to passwordless rather than a homebrew hash.
+      -- auth lib ships on install media; fall back to passwordless
+      -- rather than a homebrew hash when it is missing.
       local okAuth, auth = pcall(require, "auth")
       if not okAuth then
         term.writeln("No auth lib on media -- root stays passwordless.")

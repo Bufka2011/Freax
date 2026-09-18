@@ -1,0 +1,60 @@
+NAME
+  apt - update Freax from the network without leaving the game
+
+SYNOPSIS
+  apt update [--source=URL]
+  apt upgrade [--yes] [--force] [--source=URL]
+  apt version
+  apt sources
+
+DESCRIPTION
+  apt pulls core OS files over HTTP from an update source (by default
+  the GitHub project) and installs them onto the running hard drive.
+  No world restart is needed: files stream straight to disk in small
+  chunks, half-written downloads are never left in place (temp file
+  plus rename), and your accounts and config (/etc/passwd,
+  /etc/shadow, /etc/hostname, custom /etc/apt/sources.list, /home)
+  are never overwritten.
+
+  Kernel and boot files take effect on the next in-game reboot, not
+  instantly. apt prompts for that reboot; everything else (shell,
+  tools, libs, man pages) is live for the next command you run.
+
+  apt requires an internet card (see `man wget`).
+
+COMMANDS
+  update
+    Fetch the remote VERSION and manifest, compare with the local
+    /VERSION, and report. Caches the manifest for `upgrade`.
+  upgrade
+    Download every manifest file and install it. Prompts before
+    starting unless --yes is given. Skips files already up to date
+    unless --force is given.
+  version
+    Print the local version (works offline).
+  sources
+    Print the effective update source (works offline).
+
+OPTIONS
+  --source=URL
+    Use URL as the update source for this run instead of
+    /etc/apt/sources.list. The repo root mirrors the installed
+    root (/), so apt fetches URL + path per manifest entry.
+  --yes, -y
+    Do not prompt before downloading (upgrade only).
+  --force, -f
+    Re-download even when local and remote versions match.
+
+FILES
+  /VERSION, /manifest
+  /etc/apt/sources.list
+
+EXAMPLES
+  apt update
+    Check for a new release.
+
+  apt upgrade
+    Install it, then reboot when asked.
+
+  apt upgrade --source=http://192.168.1.5:8000/
+    Update from a local test mirror.

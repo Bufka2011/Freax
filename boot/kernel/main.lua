@@ -1985,7 +1985,14 @@ function K.init(a, b)
       end
     end
   end
-  K.klog("freax 0.5 kernel up")
+  -- Single-source version: /VERSION (apt-kept), fallback for old media.
+  -- File is bytes-long; whole-read is safe (unlike the 66K kernel).
+  local kver = "0.6"
+  do
+    local data = vfsReadFile("/VERSION")
+    if data and data:match("%S+") then kver = data:match("%S+") end
+  end
+  K.klog("freax " .. kver .. " kernel up")
 end
 
 function K.start()

@@ -117,7 +117,7 @@ builtins.help = function()
   io.write("doc: man\n")
   io.write("accounts: login passwd su whoami adduser\n")
   io.write("text: head grep wc sort less edit lua | sys: sleep uptime dmesg free\n")
-  io.write("misc: which printenv hostname date time yes mktmp reboot shutdown install\n")
+  io.write("misc: which printenv hostname date time yes mktmp reboot shutdown install apt\n")
   io.write("hw: components lshw address primary redstone flash label resolution\n")
   io.write("net: wget pastebin\n")
   io.write("ops: a | b, > >> < 2> 2>&1 &> & jobs, ; && ||, quotes, source (M2)\n")
@@ -383,7 +383,13 @@ function runLine(line, depth)
   return code
 end
 
-term.writeln("FREAX 0.5 -- welcome, " .. (os.getenv("USER") or "root"))
+-- Single-source version: /VERSION (apt-kept), fallback for old media.
+local _ver = "0.6"
+do
+  local data = fs.readFile("/VERSION")
+  if data and data:match("%S+") then _ver = data:match("%S+") end
+end
+term.writeln("FREAX " .. _ver .. " -- welcome, " .. (os.getenv("USER") or "root"))
 
 local function hostname()
   if not _hostname then

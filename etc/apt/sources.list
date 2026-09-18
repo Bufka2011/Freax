@@ -1,0 +1,4 @@
+# Freax update source. Repo root mirrors the installed root (/),
+# so apt fetches <source><path> for each entry in the manifest.
+# Default: GitHub raw. Point at a mirror to override.
+https://raw.githubusercontent.com/Bufka2011/Freax/main/

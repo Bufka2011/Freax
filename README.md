@@ -44,6 +44,9 @@ Copy the repo files to an OC disk/diskettepreserving paths. Boot the computer.
 
 Run `install` to install to a hard drive (needs a second writable HDD).
 
+After that, update without leaving the game: `apt update`, `apt upgrade`,
+then `reboot` when asked (needs an internet card, versioned by `/VERSION`).
+
 ## Requirements
 
 - OpenComputers (GTNH fork, 1.7.10).
