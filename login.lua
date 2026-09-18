@@ -14,6 +14,25 @@ end
 term.clear() -- pristine screen: never show boot leftovers at the prompt
 
 while true do
+  if not fs.exists("/etc/passwd") then
+    -- Fresh/dev media with no account database: drop to a root setup
+    -- shell instead of a login that could never succeed. Create
+    -- accounts (or run the installer), then logout/reboot to log in.
+    term.writeln("No account database (/etc/passwd) -- root setup shell.")
+    term.writeln("Create /etc/passwd + /etc/shadow (see passwd seed files),")
+    term.writeln("then type `exit` to reach the login prompt.")
+    os.setenv("USER", "root")
+    os.setenv("LOGNAME", "root")
+    os.setenv("HOME", "/")
+    freax.setCwd("/")
+    local pid = freax.spawn("root-sh", "/bin/sh.lua", {})
+    if pid then
+      freax.wait(pid)
+    else
+      term.writeln("Cannot start shell.")
+      return
+    end
+  else
   term.write(hostname() .. " login: ")
   local user = term.readLine() or ""
   user = user:match("%S+") or ""
@@ -57,5 +76,6 @@ while true do
     end
     term.writeln("")
     term.clear() -- fresh screen for the next login, like agetty
+  end
   end
 end
