@@ -1892,6 +1892,9 @@ function K.loop()
             p.queue[#p.queue + 1] = sig
           end
           ok, err = coroutine.resume(p.co)
+        else
+          -- idle tick: still resume so sleep/poll daemons make progress
+          ok, err = coroutine.resume(p.co)
         end
         if ok == false then
           K.klog(p.name .. " (pid " .. p.pid .. "): " .. tostring(err))
