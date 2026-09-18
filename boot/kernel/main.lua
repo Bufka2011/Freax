@@ -407,13 +407,11 @@ function K.klog(msg)
   klogPush(msg)
   local g = gpu0()
   if g then
-    ttyHideCursor()
-    g.setForeground(0xFFAA00)
     local w = g.getResolution()
     g.fill(1, 1, w or 80, 1, " ")
+    g.setForeground(0xFFAA00)
     g.set(1, 1, "[freax] " .. tostring(msg))
     g.setForeground(0xFFFFFF)
-    ttyShowCursor()
   end
 end
 
