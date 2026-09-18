@@ -15,9 +15,62 @@ term.clear() -- pristine screen: never show boot leftovers at the prompt
 
 while true do
   if not fs.exists("/etc/passwd") then
-    -- Live media without an installed system: present it as demo mode.
-    -- Same root shell underneath.
-    term.writeln("Demo mode. Run install to set up this computer.")
+    -- Beta/demo media: reset the boot drive to shipped files, then
+    -- drop to a root setup shell. Mounts and dotfiles are spared.
+    term.writeln("Beta mode. All data will be wiped on reboot.")
+    local mf = fs.readFile("/manifest")
+    if not mf then
+      term.writeln("No manifest -- skipping wipe.")
+    else
+      local keep = {}
+      for line in (mf .. "\n"):gmatch("(.-)\n") do
+        if line ~= "" and line:sub(1, 1) ~= "#" then keep[line] = true end
+      end
+      local mounts = {}
+      for _, m in ipairs(fs.mounts()) do
+        if m.path ~= "/" then mounts[#mounts + 1] = m.path end
+      end
+      -- mount points, anything under them, and their ancestor dirs
+      -- (except /) are never touched: other drives are not ours.
+      local function protectedDir(dir)
+        if dir == "/" then return false end
+        for _, mp in ipairs(mounts) do
+          if dir == mp then return true end
+          if (dir .. "/"):sub(1, #mp + 1) == mp .. "/" then return true end
+          if (mp .. "/"):sub(1, #dir + 1) == dir .. "/" then return true end
+        end
+        return false
+      end
+      local removed, dirs = 0, {}
+      local function walk(dir)
+        if protectedDir(dir) then return end
+        local list = fs.list(dir)
+        if not list then return end
+        for _, name in ipairs(list) do
+          if name:sub(1, 1) ~= "." then
+            local isDir = name:sub(-1) == "/"
+            local base = isDir and name:sub(1, -2) or name
+            local full = (dir == "/" and "/" .. base or dir .. "/" .. base)
+            if not protectedDir(full) then
+              if isDir then
+                walk(full)
+                dirs[#dirs + 1] = full
+              else
+                local rel = full:sub(2)
+                if not keep[rel] then
+                  local ok = fs.remove(full)
+                  if ok then removed = removed + 1 end
+                end
+              end
+            end
+          end
+        end
+      end
+      walk("/")
+      for i = #dirs, 1, -1 do pcall(fs.remove, dirs[i]) end
+      term.writeln("Wiped " .. removed .. " files.")
+    end
+    term.writeln("Run install to set up this computer.")
     os.setenv("USER", "root")
     os.setenv("LOGNAME", "root")
     os.setenv("HOME", "/")
