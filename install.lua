@@ -292,28 +292,32 @@ end
 local fails = 0
 local skipped = {} -- dst paths missing on source (stale install media)
 for _, e in ipairs(manifest) do
-  -- Read from source media (srcMount), not from cwd/root.
+  -- Stream from source media (srcMount), not from cwd/root.
   -- Tries FHS path then flat fallback, both under srcMount.
-  local data
-  local tried = {}
-  for _, s in ipairs(e.srcs) do
-    local cand = s
-    if srcMount ~= "/" then
-      -- s is absolute ("/bin/x"); prefix with source mount
-      cand = srcMount .. s
-    end
-    tried[#tried + 1] = cand
-    data = fs.readFile(cand)
-    if data then break end
-  end
-  if not data and srcMount ~= "/" then
-    -- last resort: cwd-relative (old behaviour) in case mount table shifted
+  -- Streaming fd->fd in 4K chunks: never hold a whole file in RAM.
+  -- (readFile+concat on 66K main.lua OOMs low-RAM machines: the
+  -- kernel + shell + installer + 2x file copies exceed the budget.)
+  local function candidates()
+    local out = {}
     for _, s in ipairs(e.srcs) do
-      data = fs.readFile(s)
-      if data then break end
+      if srcMount ~= "/" then
+        -- s is absolute ("/bin/x"); prefix with source mount
+        out[#out + 1] = srcMount .. s
+      else
+        out[#out + 1] = s
+      end
     end
+    if srcMount ~= "/" then
+      -- last resort: cwd-relative (old behaviour) in case mount table shifted
+      for _, s in ipairs(e.srcs) do out[#out + 1] = s end
+    end
+    return out
   end
-  if not data then
+  local srcPath
+  for _, cand in ipairs(candidates()) do
+    if fs.exists(cand) then srcPath = cand break end
+  end
+  if not srcPath then
     term.writeln("skip (not found on source): " .. e.dst)
     skipped[e.dst] = true
     fails = fails + 1
@@ -323,24 +327,34 @@ for _, e in ipairs(manifest) do
     -- ensure parent chain exists (mkdirP builds under tmount)
     local out = tmount .. e.dst
     -- makeDirectory may fail if exists; ignore
-    local fd, err = fs.open(out, "w")
-    if not fd then
-      term.writeln("write fail " .. e.dst .. ": " .. tostring(err))
+    local infd, rerr = fs.open(srcPath, "r")
+    if not infd then
+      term.writeln("read fail " .. e.dst .. ": " .. tostring(rerr))
       fails = fails + 1
     else
-      -- chunked writes: single giant writes risk truncation on real
-      -- hardware (OpenOS copies in 1-4K chunks for the same reason)
-      local ok, werr = true, nil
-      for i = 1, #data, 4096 do
-        ok, werr = fs.write(fd, data:sub(i, i + 4095))
-        if not ok then break end
-      end
-      fs.close(fd)
-      if not ok then
-        term.writeln("write fail " .. e.dst .. ": " .. tostring(werr))
+      local outfd, werr0 = fs.open(out, "w")
+      if not outfd then
+        fs.close(infd)
+        term.writeln("write fail " .. e.dst .. ": " .. tostring(werr0))
         fails = fails + 1
       else
-        term.writeln(e.dst)
+        -- chunked copy: single giant writes risk truncation on real
+        -- hardware (OpenOS copies in 1-4K chunks for the same reason)
+        local ok, werr = true, nil
+        while true do
+          local chunk = fs.read(infd, 4096)
+          if not chunk then break end
+          ok, werr = fs.write(outfd, chunk)
+          if not ok then break end
+        end
+        fs.close(infd)
+        fs.close(outfd)
+        if not ok then
+          term.writeln("write fail " .. e.dst .. ": " .. tostring(werr))
+          fails = fails + 1
+        else
+          term.writeln(e.dst)
+        end
       end
     end
   end
@@ -364,9 +378,11 @@ need[#need + 1] = "/etc/shadow"
 need[#need + 1] = "/manifest"
 local bad = 0
 for _, p in ipairs(need) do
-  local back = fs.readFile(tmount .. p)
-  if back and #back > 0 then
-    term.writeln("  ok " .. p .. " (" .. #back .. "b)")
+  -- size check, not full read: readFile on 66K main.lua doubles RAM
+  -- pressure right after the copy loop (second OOM source).
+  local sz = fs.size(tmount .. p)
+  if sz and sz > 0 then
+    term.writeln("  ok " .. p .. " (" .. sz .. "b)")
   elseif skipped[p] then
     term.writeln("  MISSING " .. p .. " (was skipped: update the install media)")
     bad = bad + 1

@@ -459,14 +459,25 @@ local function ttyWrite(s)
   ttyHideCursor()
   local w = ttySize()
   s = tostring(s)
-  for i = 1, #s do
-    local ch = s:sub(i, i)
-    if ch == "\n" then
-      ttyNewline()
-    else
-      g.set(termSt.cx, termSt.cy, ch)
-      termSt.cx = termSt.cx + 1
+  -- Segment writes: one g.set per wrap-limited run, no per-char
+  -- string buildup (run..ch is O(n^2) garbage and OOMs low-RAM
+  -- machines on long lines). Layout matches per-char writes.
+  local i, n = 1, #s
+  while i <= n do
+    local nl = s:find("\n", i, true)
+    local segEnd = nl and (nl - 1) or n
+    while i <= segEnd do
       if termSt.cx > w then ttyNewline() end
+      local room = w - termSt.cx + 1
+      local j = math.min(segEnd, i + room - 1)
+      g.set(termSt.cx, termSt.cy, s:sub(i, j))
+      termSt.cx = termSt.cx + (j - i + 1)
+      i = j + 1
+      if termSt.cx > w and i <= segEnd then ttyNewline() end
+    end
+    if nl then
+      ttyNewline()
+      i = nl + 1
     end
   end
   ttyShowCursor()
