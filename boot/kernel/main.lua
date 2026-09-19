@@ -234,21 +234,24 @@ expandLinks = function(absPath, followFinal)
   return nil, "too many levels of symbolic links"
 end
 
--- Stream-compile a VFS file into an env: no full-source string and no
--- O(n^2) `data = data .. chunk` garbage. Used for programs and libraries
--- so low-RAM machines survive load peaks (see also init.lua).
+-- Compile a VFS file with a chunk list + single table.concat: avoids the
+-- O(n^2) garbage of `data = data .. chunk` while keeping load(string),
+-- the only form OC's sandbox reliably supports (reader-function load
+-- returns nil there). Used for programs and libraries.
 local function vfsLoad(absPath, chunkname, env)
   local exp = expandLinks(absPath, true) or absPath
   local proxy, rest = vfsResolve(exp)
   if not proxy or rest == "" then return nil end
   local ok, h = pcall(proxy.open, rest, "r")
   if not ok or not h then return nil end
-  local fn, err = hostLoad(function()
+  local parts = {}
+  while true do
     local rok, chunk = pcall(proxy.read, h, 4096)
-    if not rok then return nil end
-    return chunk
-  end, "=" .. tostring(chunkname), "t", env)
+    if not rok or not chunk then break end
+    parts[#parts + 1] = chunk
+  end
   pcall(proxy.close, h)
+  local fn, err = hostLoad(table.concat(parts), "=" .. tostring(chunkname), "t", env)
   if not fn then return nil, err end
   return fn
 end

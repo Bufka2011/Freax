@@ -40,35 +40,29 @@ if not bootaddr then
     return (ok and handle) or nil
 end
 
--- Read the whole file. Kept for kernel fallbacks that need a string.
+-- Read whole file into a chunk list, then one table.concat. This avoids the
+-- O(n^2) garbage of `data = data .. chunk` (which peaked near 1.4MB loading
+-- the 77K kernel) while keeping load(string), the only form OC's sandbox
+-- reliably supports (reader-function load returns nil there).
 local function readAll(path)
     local h = openRead(path)
     if not h then return nil end
-    local data = ""
+    local parts = {}
     while true do
         local rok, chunk = pcall(bootfs.read, h, 4096)
         if not rok or not chunk then break end
-        data = data .. chunk
+        parts[#parts + 1] = chunk
     end
     pcall(bootfs.close, h)
-    return data
+    return table.concat(parts)
 end
 
 local readFile = readAll
 
--- Compile a file by STREAMING it into load(): no full-source string and no
--- O(n^2) `data = data .. chunk` garbage. Loading the 77K kernel via
--- concatenation peaked near 1.4MB on host; streaming keeps boot peak close
--- to the chunk's own compile cost. This is the low-RAM boot fix.
-local function loadStreaming(path, name)
-    local h = openRead(path)
-    if not h then return nil end
-    local fn, err = load(function()
-        local rok, chunk = pcall(bootfs.read, h, 4096)
-        if not rok then return nil end
-        return chunk
-    end, "=" .. name, "t")
-    pcall(bootfs.close, h)
+local function loadFile(path, name)
+    local data = readAll(path)
+    if not data then return nil end
+    local fn, err = load(data, "=" .. name, "t")
     if not fn then return nil, err end
     return fn
 end
@@ -79,7 +73,7 @@ local function loadModule(name)
     local stem = name:gsub("%.", "/")
     local candidates = { "/boot/" .. stem .. ".lua", "/lib/" .. stem .. ".lua" }
     for _, path in ipairs(candidates) do
-        local fn = loadStreaming(path, name)
+        local fn = loadFile(path, name)
         if fn then
             local result = fn()
             modules[name] = result
