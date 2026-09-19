@@ -1,8 +1,11 @@
 -- selfcheck: runs inside Freax via `lua /selfcheck.lua` (dev tool, not installed)
 local function check(n, c)
   if not c then
-    local ff = io.open("/s_fail.txt", "w")
-    if ff then ff:write(n) ff:close() end
+    -- root may be read-only (uninstalled media): try tmp too.
+    for _, p in ipairs({ "/tmp/s_fail.txt", "/s_fail.txt" }) do
+      local ff = io.open(p, "w")
+      if ff then ff:write(n) ff:close() break end
+    end
     io.stderr:write("FAIL " .. n .. "\n")
     os.exit(1)
   end
@@ -61,11 +64,17 @@ check("unlink-keeps-target", freax.fsRemove("/sc_l1")
   and freax.fsExists("/bin/ls.lua"))
 
 check("PATH", os.getenv("PATH") ~= nil)
-local f = io.open("/s_io.txt", "w")
-f:write("x")
-f:close()
-check("io", io.open("/s_io.txt", "r"):read("*a") == "x")
-os.remove("/s_io.txt")
+-- root is read-only on uninstalled media; use tmp so this still tests io
+local tmp = os.tmpname() or "/tmp/s_io.txt"
+local f = io.open(tmp, "w")
+if f then
+  f:write("x")
+  f:close()
+  check("io", io.open(tmp, "r"):read("*a") == "x")
+  os.remove(tmp)
+else
+  io.write("skip io write test (no writable tmp)\n")
+end
 local computer = require("computer")
 check("uptime", computer.uptime() >= 0)
 check("kill-unknown", freax.kill(99999) == nil)
@@ -76,6 +85,5 @@ for _, c in ipairs({"list /", "components", "lshw", "address",
   check("exec " .. c, os.execute(c) == true)
 end
 
-local o = io.open("/s_compat.txt", "w")
-o:write("OK")
-o:close()
+local o = io.open((os.tmpname() or "/tmp/s_compat.txt"), "w")
+if o then o:write("OK") o:close() end

@@ -225,6 +225,25 @@ expandLinks = function(absPath, followFinal)
   return nil, "too many levels of symbolic links"
 end
 
+-- Stream-compile a VFS file into an env: no full-source string and no
+-- O(n^2) `data = data .. chunk` garbage. Used for programs and libraries
+-- so low-RAM machines survive load peaks (see also init.lua).
+local function vfsLoad(absPath, chunkname, env)
+  local exp = expandLinks(absPath, true) or absPath
+  local proxy, rest = vfsResolve(exp)
+  if not proxy or rest == "" then return nil end
+  local ok, h = pcall(proxy.open, rest, "r")
+  if not ok or not h then return nil end
+  local fn, err = hostLoad(function()
+    local rok, chunk = pcall(proxy.read, h, 4096)
+    if not rok then return nil end
+    return chunk
+  end, "=" .. tostring(chunkname), "t", env)
+  pcall(proxy.close, h)
+  if not fn then return nil, err end
+  return fn
+end
+
 ---------------------------------------------------------------
 -- Pipes + fd ownership (M2). fds entries carry .owner (pid).
 -- Pipes are kernel-buffered (8K cap, blocking both ends).
@@ -886,17 +905,33 @@ local function readLibSource(name)
   return data
 end
 
+-- stream-compile a library into `env`; string fallback for old media.
+local function loadLibFn(name, env)
+  local stem = name:gsub("%.", "/")
+  local base = stem:match("([^/]+)$") or stem
+  local fn, lerr = vfsLoad("/lib/" .. stem .. ".lua", name, env)
+  if not fn then fn, lerr = vfsLoad("/" .. base .. ".lua", name, env) end
+  if not fn then
+    local src = readLibSource(name)
+    if src then fn, lerr = hostLoad(src, "=" .. name, "t", env) end
+  end
+  return fn, lerr
+end
+
 local function sharedLoad(chunk, name, mode, e)
   return hostLoad(chunk, name, mode,
     e or (currentP and currentP.env) or sharedEnv)
 end
 local function sharedLoadfile(path, mode, e)
   local cwd = (currentP and currentP.cwd) or "/"
-  local data = vfsReadFile(vfsAbs(tostring(path), cwd))
-  if not data and readFile then data = readFile(path) end
-  if not data then return nil, tostring(path) .. ": not found" end
-  return hostLoad(data, "=" .. tostring(path), mode or "t",
-    e or (currentP and currentP.env) or sharedEnv)
+  local env = e or (currentP and currentP.env) or sharedEnv
+  local fn, lerr = vfsLoad(vfsAbs(tostring(path), cwd), tostring(path), env)
+  if not fn and readFile then
+    local data = readFile(path)
+    if data then fn, lerr = hostLoad(data, "=" .. tostring(path), mode or "t", env) end
+  end
+  if not fn then return nil, lerr or (tostring(path) .. ": not found") end
+  return fn
 end
 local function sharedDofile(path)
   local fn, err = sharedLoadfile(path)
@@ -912,10 +947,11 @@ local function sharedRequire(name)
   if name == "os" then return sharedEnv.os end
   if sharedLibs[name] ~= nil then return sharedLibs[name] end
   if sharedLoading[name] then error("already loading: " .. name, 2) end
-  local src = readLibSource(name)
-  if not src then error("module not found: " .. name, 2) end
-  local fn, err = hostLoad(src, "=" .. name, "t", sharedEnv)
-  if not fn then error("load error in " .. name .. ": " .. tostring(err)) end
+  local fn, lerr = loadLibFn(name, sharedEnv)
+  if not fn then
+    if lerr then error("load error in " .. name .. ": " .. tostring(lerr)) end
+    error("module not found: " .. name, 2)
+  end
   sharedLoading[name] = true
   local ok, res = pcall(fn, name)
   sharedLoading[name] = false
@@ -935,10 +971,11 @@ local function procRequire(name)
   if p.libs[name] ~= nil then return p.libs[name] end
   p._loading = p._loading or {}
   if p._loading[name] then error("already loading: " .. name, 2) end
-  local src = readLibSource(name)
-  if not src then error("module not found: " .. name) end
-  local fn, err = hostLoad(src, "=" .. name, "t", p.env)
-  if not fn then error("load error in " .. name .. ": " .. tostring(err)) end
+  local fn, lerr = loadLibFn(name, p.env)
+  if not fn then
+    if lerr then error("load error in " .. name .. ": " .. tostring(lerr)) end
+    error("module not found: " .. name)
+  end
   p._loading[name] = true
   local ok, res = pcall(fn, name)
   p._loading[name] = false
@@ -1833,12 +1870,14 @@ local function makeEnv(p)
   end
   env.loadfile = function(path, mode, e)
     local abs = vfsAbs(tostring(path), p.cwd or "/")
-    local data = vfsReadFile(abs)
-    if not data and readFile then
-      data = readFile(path)
+    local env2 = e or env
+    local fn, lerr = vfsLoad(abs, tostring(path), env2)
+    if not fn and readFile then
+      local data = readFile(path)
+      if data then fn, lerr = hostLoad(data, "=" .. tostring(path), mode or "t", env2) end
     end
-    if not data then return nil, tostring(path) .. ": not found" end
-    return hostLoad(data, "=" .. tostring(path), mode or "t", e or env)
+    if not fn then return nil, lerr or (tostring(path) .. ": not found") end
+    return fn
   end
   env.dofile = function(path)
     local fn, err = env.loadfile(path)
@@ -2153,16 +2192,6 @@ end
 ---------------------------------------------------------------
 
 function K.spawn(name, path, args, stdio, inh)
-  -- Resolve via VFS (FHS). Repo root mirrors the installed root,
-  -- so absolute paths hit on dev media too. Flat fallback for old
-  -- media where files are at root (/login.lua, not /bin/login.lua).
-  local src = vfsReadFile(vfsAbs(path, "/"))
-  if not src then
-    local base = path:match("([^/]+)$")
-    if base and base ~= path then src = vfsReadFile("/" .. base) end
-  end
-  if not src then src = readFile and readFile(path) end
-  if not src then return nil, path .. ": not found" end
   local p = {
     pid = nextPid, name = name,
     queue = {}, started = false, dead = false,
@@ -2226,9 +2255,21 @@ function K.spawn(name, path, args, stdio, inh)
     p.ioT[3] = take(stdio[3] or stdio.err, "w")
     if not okAll then closeOwnedFds(p.pid) return nil, "bad stdio" end
   end
-  local fn, err = load(src, "=" .. path, "t", makeEnv(p))
-  if not fn then closeOwnedFds(p.pid) return nil, tostring(err) end
-  if not fn then return nil, tostring(err) end
+  local env = makeEnv(p)
+  local abs = vfsAbs(path, "/")
+  local fn, lerr = vfsLoad(abs, path, env)
+  if not fn then
+    local base = path:match("([^/]+)$")
+    if base and base ~= path then fn, lerr = vfsLoad("/" .. base, path, env) end
+  end
+  if not fn and readFile then
+    local src = readFile(path)
+    if src then fn, lerr = hostLoad(src, "=" .. path, "t", env) end
+  end
+  if not fn then
+    closeOwnedFds(p.pid)
+    return nil, lerr or (path .. ": not found")
+  end
   p.co = coroutine.create(function()
     -- program return value IS the exit code (numbers; false = 1)
     local r = fn(table.unpack(args or {}))
