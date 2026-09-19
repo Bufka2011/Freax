@@ -9,6 +9,21 @@
 local fs = require("fs")
 local shell = require("shell")
 
+-- The kernel spawns systemd as PID 1. Running this file again (e.g. typing
+-- `systemd` at the shell) would start a second daemon that falls back to
+-- spawning another login -- a surprise relogin with the shell stuck waiting.
+-- Refuse unless we ARE the PID 1 instance. Use systemctl to control services.
+if freax.getpid() ~= 1 then
+  local already = false
+  for _, p in ipairs(freax.ps()) do
+    if p.name == "systemd" and not p.dead then already = true break end
+  end
+  if already then
+    io.stderr:write("systemd: already running as PID 1 (use `systemctl` to control services)\n")
+    return 1
+  end
+end
+
 local CTRL = "/run/systemd"
 local RUN_DIR = CTRL
 local function mkdirP(p)
