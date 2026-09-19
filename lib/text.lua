@@ -106,6 +106,45 @@ end
 
 require("package").delay(text, "/lib/core/full_text.lua")
 
+-- Inlined from full_text.lua so programs work without deferred load
+function text.split(input, delimiters, dropDelims, di)
+  if type(delimiters) ~= "table" then
+    delimiters = {delimiters}
+  end
+  local result = {}
+  local current = ""
+  local i = 1
+  while i <= #input do
+    local found = false
+    for _, delim in ipairs(delimiters) do
+      local dlen = #delim
+      if input:sub(i, i + dlen - 1) == delim then
+        if not dropDelims then
+          table.insert(result, current)
+        end
+        if dropDelims then
+          table.insert(result, delim)
+        end
+        current = ""
+        i = i + dlen
+        found = true
+        break
+      end
+    end
+    if not found then
+      current = current .. input:sub(i, i)
+      i = i + 1
+    end
+  end
+  if #result == 0 then
+    return {input}
+  end
+  if #current > 0 then
+    table.insert(result, current)
+  end
+  return result
+end
+
 -- Freax addition: the pure helpers from full_text (pad/wrap/detab),
 -- inlined so components/lshw work without the full stream machinery
 -- (which needs buffer/process internals Freax doesn't have).
