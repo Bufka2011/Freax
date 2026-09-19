@@ -2,11 +2,23 @@ local fs = require("fs")
 local shell = require("shell")
 local text = require("text")
 
-local USAGE = "Usage: find [path] [--type=dfs] [--[i]name=EXPR]\n  --type  d:directory, f:file, s:symlink\n  --name  glob pattern (case sensitive)\n  --iname glob pattern (case insensitive)\n"
+local USAGE = [===[Usage: find [path] [--type=[dfs]] [--[i]name=EXPR]
+  --path  if not specified, path is assumed to be current working directory
+  --type  returns results of a given type, d:directory, f:file, and s:symlinks
+  --name  specify the file name pattern. Use quote to include *. iname is
+          case insensitive
+  --help  display this help and exit]===]
 
 local args, options = shell.parse(...)
 
-if options.help then print(USAGE); return 0 end
+if (not args or not options) or options.help then
+  print(USAGE)
+  if not options.help then
+    return 1
+  else
+    return
+  end
+end
 
 if #args > 1 then io.stderr:write(USAGE); return 1 end
 

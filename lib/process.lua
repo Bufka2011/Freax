@@ -20,7 +20,7 @@ function process.info(pid)
   if not i then return nil end
   local data = handle_registry[i.pid]
   if not data then
-    data = { handles = {}, vars = i.vars }
+    data = { handles = {}, vars = i.vars, io = {} }
     handle_registry[i.pid] = data
   end
   return {

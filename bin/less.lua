@@ -2,11 +2,13 @@ local keys = require("keyboard").keys
 local shell = require("shell")
 local unicode = require("unicode")
 local term = require("term")
-local event = require("event")
 
 local args, ops = shell.parse(...)
-local cat_cmd = table.concat({"cat", table.unpack(args)}, " ")
-if #args == 0 then cat_cmd = "cat" end
+if #args > 1 then
+  io.write("Usage: less <filename>\n-or no args reads stdin\n")
+  return 1
+end
+local cat_cmd = table.concat({"cat", ...}, " ")
 
 if not io.output().tty then return os.execute(cat_cmd) end
 
@@ -40,9 +42,15 @@ local function scan(num)
     else
       local full_line = preader:read()
       if not full_line then preader:close(); break end
+      local buffering = false
       for _, line in ipairs(split(full_line)) do
-        lines[#lines + 1] = line
-        if scrollback then scrollback[#scrollback + 1] = line end
+        if not buffering then
+          lines[#lines + 1] = line
+        end
+        if scrollback then
+          buffering = true
+          scrollback[#scrollback + 1] = line
+        end
       end
     end
     for _, line in ipairs(lines) do
@@ -54,16 +62,14 @@ local function scan(num)
   return result, line_count
 end
 
-local function showEndMarker()
+local function status()
   if end_of_buffer then
-    term.setCursorPos(1, height)
-    term.write("(END)")
+    if ops.noback then
+      os.exit()
+    end
+    io.write("(END)")
   end
-end
-
-local function hideEndMarker()
-  term.setCursorPos(1, height)
-  term.write(string.rep(" ", width))
+  io.write(":")
 end
 
 local function goback(n)
@@ -72,22 +78,23 @@ local function goback(n)
   n = math.min(current_top, n)
   if n < 1 then return end
   local top = current_top - n + 1
-  hideEndMarker()
   term.scroll(-n)
-  for i = top, top + n - 1 do
-    term.setCursorPos(1, i - top + 1)
-    term.write(scrollback[i] or string.rep(" ", width))
+  term.setCursor(1, 1)
+  for i = 1, n do
+    if i >= height then break end
+    print(scrollback[top + i - 1])
   end
+  term.setCursor(1, height)
   bottom = bottom - n
   end_of_buffer = false
 end
 
 local function goforward(n)
+  term.clearLine()
   local update, line_count = scan(n)
   for _, line in ipairs(update) do print(line) end
   if line_count < n then
     end_of_buffer = true
-    showEndMarker()
   end
   bottom = bottom + line_count
 end
@@ -95,10 +102,14 @@ end
 goforward(height - 1)
 
 while true do
-  local e, _, _, code = event.pull()
-  if e == "interrupted" then break end
-  if e == "key_down" then
-    if code == keys.q then break
+  term.clearLine()
+  status()
+  local e, _, _, code = term.pull()
+  if e == "interrupted" then break
+  elseif e == "key_down" then
+    if code == keys.q then
+      term.clearLine()
+      os.exit()
     elseif code == keys["end"] then goforward(math.huge)
     elseif code == keys.space or code == keys.pageDown then goforward(height - 1)
     elseif code == keys.enter or code == keys.down then goforward(1)
@@ -108,4 +119,3 @@ while true do
     end
   end
 end
-term.clear()

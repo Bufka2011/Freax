@@ -69,7 +69,33 @@ function tty.keyboard() return "keyboard0" end
 
 tty.stream = {}
 function tty.stream.read() return term.readLine() end
-function tty.stream:write(v) term.write(v) end
+function tty.stream:write(v)
+  v = v:gsub("\n", "\r\n")
+  local i = 1
+  while i <= #v do
+    local byte = v:byte(i)
+    if byte == 8 then
+      local cx, cy = term.getCursor()
+      if cx > 1 then term.setCursor(cx - 1, cy) end
+      i = i + 1
+    elseif byte == 7 then
+      i = i + 1
+    else
+      local next = v:find("[\008\007]", i + 1)
+      if next then
+        term.write(v:sub(i, next - 1))
+        i = next
+      else
+        term.write(v:sub(i))
+        break
+      end
+    end
+  end
+  local w, h = term.getSize()
+  local cx, cy = term.getCursor()
+  if cx > w then term.setCursor(w, cy) end
+  if cy > h then term.setCursor(cx, h) end
+end
 function tty.stream.scroll() return 0 end
 function tty.stream.close() return nil, "tty: invalid operation" end
 function tty.stream.seek() return nil, "tty: invalid operation" end

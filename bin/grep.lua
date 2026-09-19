@@ -45,7 +45,13 @@ local print_count = pop("c", "count")
 local trim = pop("t", "trim")
 local binary = pop("a", "binary", "text")
 
-if next(options) then printUsage(stderr, "unexpected option: " .. next(options)); return 2 end
+if next(options) then
+  if not quiet then
+    printUsage(stderr, "unexpected option: " .. next(options))
+    return 2
+  end
+  return 0
+end
 
 local PATTERNS = {args[1]}
 local FILES = {select(2, table.unpack(args))}
@@ -83,7 +89,14 @@ local trim_front = trim and function(s) return s:gsub("^%s+", "") end or noop
 local trim_back = trim and function(s) return s:gsub("%s+$", "") end or noop
 
 local function resolve(file)
-  return shell.resolve(file)
+  if file:sub(1, 1) == "/" then
+    return fs.canonical(file)
+  else
+    if file:sub(1, 2) == "./" then
+      file = file:sub(3, -1)
+    end
+    return fs.canonical(fs.concat(shell.getWorkingDirectory(), file))
+  end
 end
 
 local function getAllFiles(dir, file_list)
@@ -113,13 +126,18 @@ local function readLines()
         curFile = file; meta.label = stdin_label; curHand = io.input()
       else
         meta.label = file
-        local rp = resolve(file)
-        if fs.exists(rp) then
-          curHand, err = io.open(rp, "r")
-          if not curHand then stderr:write("grep: " .. meta.label .. ": " .. (err or "failed to read") .. "\n"); return false, 2 end
+        local rp, reason = resolve(file)
+        if rp then
+          curHand, reason = io.open(rp, "r")
+          if not curHand then
+            local msg = string.format("failed to read from %s: %s", meta.label, reason or "unknown error")
+            stderr:write("grep: ", msg, "\n")
+            return false, 2
+          end
           curFile = meta.label
         else
-          stderr:write("grep: " .. meta.label .. ": file not found\n"); return false, 2
+          stderr:write("grep: ", meta.label, ": file not found\n")
+          return false, 2
         end
       end
     end
@@ -162,7 +180,7 @@ local function test(m, p)
     local matched = not ((m_only or last_index == 1) and not i)
     if (hit_value == 1 and word_fail) or line_fail then matched, i, j = false end
     if invert_match == matched then break end
-    if max_matches == 0 then return end
+    if max_matches == 0 then os.exit(1) end
     any_hit_ec = 0
     m.hits, hit_value = m.hits + hit_value, 0
     if f_only or no_only then m.close = true end
@@ -177,7 +195,8 @@ local function test(m, p)
     if colorize and i then write_color(g, "31") else io.write(g) end
     empty_line = false
     last_index = (j or slen) + 1
-    if m_only or last_index > slen then io.write("\n"); empty_line = true; needs_filename, needs_line_num = include_filename, print_line_num end
+    if m_only or last_index > slen then io.write("\n"); empty_line = true; needs_filename, needs_line_num = include_filename, print_line_num
+    elseif p:find("^^") and not plain then p = "^$" end
   end
   if not empty_line then io.write("\n") end
   if max_matches ~= math.huge and m.hits >= max_matches then m.close = true end

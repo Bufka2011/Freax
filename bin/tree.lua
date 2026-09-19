@@ -16,10 +16,13 @@ if opts.help then
   io.write("  -i        no indent lines\n")
   io.write("  -r        reverse sort\n")
   io.write("  -S        sort by size\n")
+  io.write("  -t        sort by modification time\n")
   io.write("  -X        sort by extension\n")
   io.write("  -C        no counting\n")
-  io.write("  --level=N max depth\n")
-  io.write("  --color=WHEN  auto/always/never\n")
+  io.write("  -R        count root directories like other files\n")
+  io.write("  --full-time  with -l, print full ISO timestamps\n")
+  io.write("  --level=N    max depth\n")
+  io.write("  --color=WHEN auto/always/never\n")
   io.write("  --si      powers of 1000\n")
   return 0
 end
@@ -62,10 +65,12 @@ local function st(path)
   s.path = path
   s.name = fs.name(path) or "/"
   s.sortName = s.name:gsub("^%.", "")
+  s.time = fs.lastModified(path)
   s.isLink = fs.isLink(path)
   s.isDir = fs.isDirectory(path)
   s.size = s.isLink and 0 or fs.size(path)
   s.ext = s.name:match("(%.[^.]+)$") or ""
+  s.fs = fs.get(path)
   return s
 end
 
@@ -74,8 +79,11 @@ local function makeColorize()
     local parts = text.split(e, {"="}, true)
     return parts[2], parts[1]
   end)
-  return function(s)
-    return s.isLink and (colors.ln or "0;33") or s.isDir and (colors.di or "0;36") or colors["*" .. s.ext] or (colors.fi or "0")
+  return function(st)
+    return st.isLink and colors.ln or
+           st.isDir and colors.di or
+           colors["*" .. st.ext] or
+           colors.fi
   end
 end
 
@@ -89,6 +97,7 @@ local function listDir(dir)
     end
     if opts.S then table.sort(l, function(a, b) return a.size < b.size end)
     elseif opts.X then table.sort(l, function(a, b) return a.ext < b.ext end)
+    elseif opts.t then table.sort(l, function(a, b) return a.time < b.time end)
     else table.sort(l, function(a, b) return a.sortName < b.sortName end)
     end
     if opts.r then for i = #l, 1, -1 do coroutine.yield(l[i]) end
@@ -125,8 +134,13 @@ local function dig(roots)
   return coroutine.wrap(function()
     for _, root in ipairs(roots) do
       local rp = shell.resolve(root)
-      if fs.exists(rp) then digRoot(rp)
-      else io.stderr:write("tree: " .. root .. ": No such file or directory\n"); ec = 1 end
+      local real, reason = fs.realPath(rp)
+      if real then
+        if fs.exists(rp) then digRoot(rp)
+        else io.stderr:write("tree: " .. root .. ": No such file or directory\n"); ec = 1 end
+      else
+        io.stderr:write("tree: cannot access " .. root .. ": " .. (reason or "unknown error") .. "\n"); ec = 1
+      end
     end
   end)
 end
@@ -144,30 +158,59 @@ local function fmtSize(size)
   return nod(math.floor(size * 10) / 10) .. sizes[u]
 end
 
-local dirCount, fileCount = 0, 0
+local function pad(txt)
+  txt = tostring(txt)
+  return #txt >= 2 and txt or "0" .. txt
+end
 
-for entry, levelStack in dig(roots) do
-  local isDir = entry.isDir
-  if not opts.C then
-    if isDir then dirCount = dirCount + 1 else fileCount = fileCount + 1 end
+local function formatTime(epochms)
+  if epochms == 0 then return "" end
+  local d = os.date("*t", epochms)
+  local day, hour, min, sec = nod(d.day), pad(nod(d.hour)), pad(nod(d.min)), pad(nod(d.sec))
+  if opts["full-time"] then
+    return string.format("%s-%s-%s %s:%s:%s ", d.year, pad(nod(d.month)), pad(day), hour, min, sec)
+  else
+    local month_names = {"January","February","March","April","May","June","July","August","September","October","November","December"}
+    return string.format("%s %2s %2s:%2s ", month_names[d.month]:sub(1, 3), day, hour, pad(min))
   end
+end
+
+local function writeEntry(entry, levelStack)
   for i, hasNext in ipairs(levelStack) do
     if opts.i then break end
     if i == #levelStack then io.write(hasNext and "├── " or "└── ")
     else io.write(hasNext and "│   " or "    ") end
   end
   if opts.l then
-    io.write("[" .. (isDir and "d" or "f") .. " " .. fmtSize(entry.size) .. "] ")
+    io.write("[")
+    io.write(entry.isDir and "d" or entry.isLink and "l" or "f", "-")
+    io.write("r", entry.fs and entry.fs.isReadOnly() and "-" or "w", " ")
+    io.write(fmtSize(entry.size), " ")
+    io.write(formatTime(entry.time))
+    io.write("] ")
   end
   if opts.Q then io.write('"') end
   if colorize then io.write("\27[" .. colorize(entry) .. "m") end
   if opts.f then io.write(entry.path) else io.write(entry.name) end
   if colorize then io.write("\27[0m") end
-  if opts.p and isDir then io.write("/") end
+  if opts.p and entry.isDir then io.write("/") end
   if opts.Q then io.write('"') end
   io.write("\n")
+end
+
+local function writeCount(dirs, files)
+  io.write("\n" .. dirs .. " director" .. (dirs == 1 and "y" or "ies") .. ", " .. files .. " file" .. (files == 1 and "" or "s") .. "\n")
+end
+
+local dirCount, fileCount = 0, 0
+
+for entry, levelStack in dig(roots) do
+  if opts.R or #levelStack > 0 then
+    if entry.isDir then dirCount = dirCount + 1 else fileCount = fileCount + 1 end
+  end
+  writeEntry(entry, levelStack)
   yieldopt()
 end
 
-if not opts.C then io.write("\n" .. dirCount .. " director" .. (dirCount == 1 and "y" or "ies") .. ", " .. fileCount .. " file" .. (fileCount == 1 and "" or "s") .. "\n") end
+if not opts.C then writeCount(dirCount, fileCount) end
 return ec
