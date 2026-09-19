@@ -3,6 +3,7 @@
 # -- bin
 bin/address.lua
 bin/adduser.lua
+bin/alias.lua
 bin/apt.lua
 bin/cat.lua
 bin/components.lua
@@ -11,6 +12,7 @@ bin/date.lua
 bin/df.lua
 bin/dmesg.lua
 bin/du.lua
+bin/echo.lua
 bin/edit.lua
 bin/find.lua
 bin/flash.lua
@@ -52,6 +54,7 @@ bin/systemctl.lua
 bin/time.lua
 bin/touch.lua
 bin/tree.lua
+bin/unalias.lua
 bin/umount.lua
 bin/uptime.lua
 bin/wc.lua
@@ -64,6 +67,7 @@ boot/kernel/main.lua
 # -- etc
 etc/hostname
 etc/motd
+etc/profile.lua
 # -- etc/apt
 etc/apt/sources.list
 # -- etc/systemd

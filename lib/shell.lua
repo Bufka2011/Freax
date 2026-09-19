@@ -1,13 +1,7 @@
--- shell: Freax shell helper lib (M1).
--- Inspired by OpenOS lib/shell.lua: parse + resolve + cwd.
--- No unicode dep (Tier1 friendly, uses string).
-
 local freax = freax
 
 local shell = {}
 
--- parse("cp", "-rv", "--skip=x", "a", "b") -> {"a","b"}, {r=true,v=true,skip="x"}
--- OpenOS-compatible: --key=val, --flag, -abc, -- stops options.
 function shell.parse(...)
   local params = table.pack(...)
   local args, opts = {}, {}
@@ -34,20 +28,44 @@ function shell.parse(...)
 end
 
 function shell.getWorkingDirectory() return freax.getCwd() end
+
 function shell.setWorkingDirectory(dir)
   local ok, err = freax.setCwd(dir)
   if ok then return true end
   return nil, err
 end
 
--- resolve relative paths against cwd; absolute passes through canonical.
-function shell.resolve(path)
+function shell.resolve(path, ext)
   path = tostring(path or "")
-  if path:sub(1, 1) == "/" then return freax.fsCanonical(path) end
-  return freax.fsCanonical(freax.fsConcat(freax.getCwd(), path))
+  if path:sub(1, 1) == "/" then
+    path = freax.fsCanonical(path)
+  else
+    path = freax.fsCanonical(freax.fsConcat(freax.getCwd(), path))
+  end
+  if not ext then
+    return path
+  end
+  local name = freax.fsName(path)
+  if not name then
+    return path
+  end
+  local dir = path:sub(1, #path - #name)
+  if dir == "" then dir = "/" end
+  local has_slash = path:find("/")
+  local search_in = has_slash and dir or (os.getenv("PATH") or "/sbin:/bin:/usr/bin:.")
+  for search_path in search_in:gmatch("[^:]+") do
+    local base = freax.fsCanonical(freax.fsConcat(shell.getWorkingDirectory(), search_path))
+    local cand = freax.fsCanonical(base .. "/" .. name)
+    if not freax.fsExists(cand) then
+      cand = cand .. "." .. ext
+    end
+    if freax.fsExists(cand) and not freax.fsIsDir(cand) then
+      return cand
+    end
+  end
+  return nil, "file not found"
 end
 
--- resolve a command name via PATH (OpenOS-ish: /bin + cwd fallback).
 function shell.resolveCmd(name)
   if name:find("/") then return shell.resolve(name) end
   local PATH = (os and os.getenv and os.getenv("PATH")) or "/bin"
@@ -59,16 +77,24 @@ function shell.resolveCmd(name)
   return "/bin/" .. name .. ".lua"
 end
 
--- foreground execute (whitespace split; real parser lands in M2 bash).
--- Delegates to os.execute so stdio redirection is honoured.
 function shell.execute(cmd)
   if not cmd then return false end
   return os.execute(tostring(cmd))
 end
 
--- aliases: stored, honoured by the M2 shell (M1 sh ignores them).
 local aliases = {}
 function shell.getAlias(a) return aliases[a] end
 function shell.setAlias(a, v) aliases[a] = v end
+function shell.aliases()
+  local i = 0
+  local ks = {}
+  for k in pairs(aliases) do ks[#ks + 1] = k end
+  table.sort(ks)
+  return coroutine.wrap(function()
+    for _, k in ipairs(ks) do
+      coroutine.yield(k, aliases[k])
+    end
+  end)
+end
 
 return shell

@@ -415,6 +415,24 @@ freax.ttySetCompleter(function(buf)
   return matches
 end)
 
+local profile = "/etc/profile.lua"
+if freax.fsExists(profile) then
+  local f = freax.fsOpen(profile, "r")
+  if f then
+    local content = ""
+    while true do
+      local chunk = freax.fsRead(f, 4096)
+      if not chunk then break end
+      content = content .. chunk
+    end
+    freax.fsClose(f)
+    if #content > 0 then
+      local fn, err = load(content, profile)
+      if fn then pcall(fn) end
+    end
+  end
+end
+
 while true do
   local user = os.getenv("USER") or "root"
   local sym = (user == "root") and "#" or "$"

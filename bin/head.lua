@@ -1,39 +1,35 @@
--- head: first lines of files or stdin (pipe-clean).
--- Usage: head [-n N] [FILE...]
-local fs = require("fs")
 local shell = require("shell")
+local args, options = shell.parse(...)
 
-local args, opts = shell.parse(...)
-local n = tonumber(opts.n) or 10
-if opts.help then
-  io.write("Usage: head [-n N] [FILE...]\n")
+local help = options.help
+local lines = tonumber(options.lines) or 10
+options.help = nil; options.lines = nil
+
+if help or next(options) or #args == 0 then
+  io.write("Usage: head [--lines=n] file...\n")
   return
 end
-if #args == 0 then args = { "-" } end
 
-for _, a in ipairs(args) do
-  local iter, close, err
-  if a == "-" then
-    iter = io.stdin:lines()
+for i = 1, #args do
+  local f, err
+  if args[i] == "-" then
+    f = io.stdin
   else
-    local path = shell.resolve(a)
-    local f
-    f, err = io.open(path, "r")
-    if f then
-      iter = f:lines()
-      close = f
-    end
+    f, err = io.open(args[i], "r")
   end
-  if not iter then
-    io.stderr:write("head: " .. a .. ": " .. tostring(err) .. "\n")
+  if not f then
+    io.stderr:write("head: " .. args[i] .. ": " .. tostring(err) .. "\n")
   else
-    local c = 0
-    for line in iter do
-      if c >= n then break end
-      if #args > 1 and c == 0 then io.write("==> " .. a .. " <==\n") end
-      io.write(line .. "\n")
-      c = c + 1
+    if #args > 1 then
+      io.write("==> " .. args[i] .. " <==\n")
     end
-    if close then close:close() end
+    local count = 0
+    repeat
+      local line = f:read("*l")
+      if not line then break end
+      io.write(line .. "\n")
+      count = count + 1
+    until count >= lines
+    if args[i] ~= "-" then f:close() end
   end
 end

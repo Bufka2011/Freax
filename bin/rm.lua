@@ -1,22 +1,25 @@
--- rm: remove files/dirs (M1, simplified).
--- Usage: rm [-r] FILE...
-local function out(s) io.write(tostring(s) .. "\n") end
 local fs = require("fs")
 local shell = require("shell")
 
-local args, opts = shell.parse(...)
-if #args == 0 or opts.help then
-  out("Usage: rm [-r] FILE...")
+local args, options = shell.parse(...)
+if #args == 0 or options.help then
+  io.write("Usage: rm [options] <file>...\n")
+  io.write("  -r  remove directories recursively\n")
+  io.write("  -f  ignore nonexistent files, never prompt\n")
+  io.write("  -v  explain what is being done\n")
   return
 end
 
+local bRec = options.r or options.R
+local bForce = options.f or options.force
+local bVerbose = options.v or options.verbose
 local ec = 0
 
 local function removeRec(path)
   local isDir = fs.isDirectory(path)
   if isDir then
     local list = fs.list(path) or {}
-    if #list > 0 and not (opts.r or opts.R) then
+    if #list > 0 and not bRec then
       return nil, "is a directory (use -r)"
     end
     for _, n in ipairs(list) do
@@ -31,11 +34,18 @@ end
 for _, a in ipairs(args) do
   local path = shell.resolve(a)
   if not fs.exists(path) then
-    ec = 1
-    out("rm: " .. a .. ": no such file")
+    if not bForce then
+      io.stderr:write("rm: " .. a .. ": no such file\n")
+      ec = 1
+    end
   else
     local ok, err = removeRec(path)
-    if not ok then ec = 1 out("rm: " .. a .. ": " .. tostring(err)) end
+    if not ok then
+      io.stderr:write("rm: " .. a .. ": " .. tostring(err) .. "\n")
+      ec = 1
+    elseif bVerbose then
+      io.write("removed '" .. a .. "'\n")
+    end
   end
 end
 return ec

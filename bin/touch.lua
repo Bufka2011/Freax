@@ -1,22 +1,36 @@
--- touch: create empty files (M2).
-local function out(s) io.write(tostring(s) .. "\n") end
-local fs = require("fs")
 local shell = require("shell")
+local args, options = shell.parse(...)
 
-local args, opts = shell.parse(...)
-if #args == 0 or opts.help then
-  out("Usage: touch FILE...")
+if options.help then
+  io.write("Usage: touch [OPTION]... FILE...\n")
   return
 end
+if #args == 0 then
+  io.stderr:write("touch: missing operand\n")
+  return 1
+end
 
-for _, a in ipairs(args) do
-  local path = shell.resolve(a)
-  if not fs.exists(path) then
-    local fd, err = fs.open(path, "w")
-    if not fd then
-      out("touch: " .. a .. ": " .. tostring(err))
+local no_create = options.c or options["no-create"]
+local errors = 0
+
+for _, arg in ipairs(args) do
+  local path = shell.resolve(arg)
+  if freax.fsExists(path) then
+    local f, err = io.open(path, "a")
+    if not f then
+      io.stderr:write("touch: " .. arg .. ": " .. tostring(err) .. "\n")
+      errors = 1
     else
-      fs.close(fd)
+      f:close()
+    end
+  elseif not no_create then
+    local f, err = io.open(path, "w")
+    if not f then
+      io.stderr:write("touch: " .. arg .. ": " .. tostring(err) .. "\n")
+      errors = 1
+    else
+      f:close()
     end
   end
 end
+return errors

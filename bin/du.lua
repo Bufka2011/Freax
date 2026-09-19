@@ -1,38 +1,60 @@
--- du: disk usage walk (M2). Flag: -h human-readable.
-local function out(s) io.write(tostring(s) .. "\n") end
 local fs = require("fs")
 local shell = require("shell")
 
-local args, opts = shell.parse(...)
-if #args == 0 then args = { "." } end
-if opts.help then
-  out("Usage: du [-h] DIR...")
-  return
+local args, options, reason = shell.parse(...)
+if #args == 0 then args[1] = "." end
+
+if options.help then io.write("Usage: du [OPTION]... [FILE]...\n  -h  human-readable\n  -s  summarize only\n") return true end
+
+local bHuman = options.h or options["human-readable"]
+local bSummary = options.s or options.summarize
+
+if next(options) then
+  for op in pairs(options) do io.stderr:write("du: invalid option -- " .. op .. "\n") end
+  return 1
 end
 
-local function fmt(n)
-  if not opts.h then return tostring(n) end
-  local u = { "", "K", "M" }
-  local i = 1
-  while n >= 1024 and i < #u do n = n / 1024 i = i + 1 end
-  return string.format("%.1f%s", n, u[i])
+local function fmtSize(size)
+  if not bHuman then return tostring(size) end
+  local units = {"", "K", "M", "G"}
+  local u = 1
+  while size > 1024 and u < #units do u = u + 1 size = size / 1024 end
+  return math.floor(size * 10) / 10 .. units[u]
 end
 
-local function walk(path)
+local function visitor(rpath)
   local total = 0
-  local isDir = fs.isDirectory(path)
-  if not isDir then return fs.size(path) end
-  for _, n in ipairs(fs.list(path) or {}) do
-    total = total + walk(fs.concat(path, n:gsub("/$", "")))
+  local dirs = 0
+  local spath = shell.resolve(rpath)
+  if fs.isDirectory(spath) then
+    local entries = fs.list(spath) or {}
+    for _, entry in ipairs(entries) do
+      local st, sd = visitor(rpath:gsub("/+$", "") .. "/" .. entry)
+      total = total + st
+      dirs = dirs + sd
+    end
+    if dirs == 0 and not bSummary then
+      io.write(string.format("%-12s%s\n", fmtSize(total), rpath))
+    end
+  elseif not fs.isLink(spath) then
+    total = fs.size(spath)
   end
-  return total
+  return total, dirs + (fs.isDirectory(spath) and 1 or 0)
 end
 
-for _, a in ipairs(args) do
-  local path = shell.resolve(a)
-  if not fs.exists(path) then
-    io.stderr:write("du: " .. a .. ": no such file\n")
+for _, arg in ipairs(args) do
+  local spath = shell.resolve(arg)
+  if not fs.exists(spath) then
+    io.stderr:write("du: cannot access '" .. arg .. "': no such file or directory\n")
+    return 1
+  end
+  if fs.isDirectory(spath) then
+    local total = visitor(arg)
+    if bSummary then io.write(string.format("%-12s%s\n", fmtSize(total), arg)) end
+  elseif fs.isLink(spath) then
+    io.write(string.format("%-12s%s\n", "0", arg))
   else
-    out(fmt(walk(path)) .. " " .. a)
+    io.write(string.format("%-12s%s\n", fmtSize(fs.size(spath)), arg))
   end
 end
+return true
