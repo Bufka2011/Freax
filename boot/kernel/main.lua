@@ -861,15 +861,22 @@ end
 -- which is what blew the 384K memory budget. Here modules compile once in
 -- `sharedEnv` and cache in `sharedLibs`. Process-local state is reached
 -- through dispatch proxies (freax/io/os) that resolve to the currently
--- running process (`currentP`, set by the scheduler). A small set of libs
--- with genuine per-process state (event handlers, thread workers, tty io)
--- stay per-process via PER_PROCESS.
+-- running process (`currentP`, set by the scheduler). Only the core boot
+-- libs are shared (SHARED); everything else stays per-process so a
+-- transient program frees its libs on exit.
 ---------------------------------------------------------------
 local currentP = nil
 local sharedLibs = {}
 local sharedLoading = {}
 local sharedEnv = {}
-local PER_PROCESS = { event = true, keyboard = true, thread = true, io = true }
+-- Libs worth sharing machine-wide: exactly the core set every boot process
+-- pulls (systemd/login/shell + their deps). Everything else loads in the
+-- requesting process, so a transient program (selfcheck, a one-shot tool)
+-- frees its libs on exit instead of permanently raising the memory floor.
+local SHARED = {
+  fs = true, shell = true, term = true, sh = true, text = true,
+  transforms = true, package = true, filesystem = true,
+}
 
 local freaxProxy, ioProxy, osProxy = {}, {}, {}
 local proxiesReady = false
@@ -973,10 +980,10 @@ local function sharedRequire(name)
   return res
 end
 
--- per-process require: only PER_PROCESS libs (and their deps) load in the
--- requesting process env; everything else is shared machine-wide.
+-- per-process require: libs outside the core SHARED set load in the
+-- requesting process env (and free with it); core boot libs are shared.
 local function procRequire(name)
-  if not PER_PROCESS[name] then return sharedRequire(name) end
+  if SHARED[name] then return sharedRequire(name) end
   local p = currentP
   if not p or not p.env then return sharedRequire(name) end
   p.libs = p.libs or {}
@@ -1613,15 +1620,31 @@ local function makeEnv(p)
     if ok and not err then return true end
     return nil, tostring(err or r)
   end
-  -- internet card 0: GET/POST via fds (read until nil, then close).
+  -- internet card: first available proxy (GET/POST via fds).
   local netProxy
+  local function netTry(addr)
+    if type(addr) ~= "string" then return false end
+    local ok, px = pcall(component.proxy, addr)
+    if ok and px then netProxy = px return true end
+    return false
+  end
   function freax.netAvail()
     if netProxy then return true end
+    -- component.list may return an iterator function (normal) or a table
+    -- (some ROMs); handle both. isAvailable alone does not give an address.
     local ok, it = pcall(component.list, "internet")
-    if ok and type(it) == "function" then
-      for addr in it do
-        local ok2, px = pcall(component.proxy, addr)
-        if ok2 and px then netProxy = px return true end
+    if ok and it then
+      if type(it) == "function" then
+        for addr in it do if netTry(addr) then return true end end
+      elseif type(it) == "table" then
+        for addr in pairs(it) do if netTry(addr) then return true end end
+      end
+    end
+    if component.isAvailable then
+      local ok2, avail = pcall(component.isAvailable, "internet")
+      if ok2 and avail then
+        local ok3, addr = pcall(component.list, "internet")
+        if ok3 and netTry(addr) then return true end
       end
     end
     return false
