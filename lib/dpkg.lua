@@ -301,9 +301,26 @@ end
 -- Install lifecycle
 ---------------------------------------------------------------
 
+-- OC's fs.remove is recursive for directories. Package file lists contain
+-- directory entries (e.g. /bin, /usr), so removing every entry blindly
+-- wipes shared system trees. Only ever drop a directory when it is empty;
+-- shared dirs survive because they still hold other entries.
+local function dirIsEmpty(path)
+  local list = fs.list(path)
+  if type(list) ~= "table" then return false end
+  for _ in ipairs(list) do return false end
+  return true
+end
+
 local function replaceFile(tmp, target)
-  if fs.isDirectory(target) then fs.remove(target) end
-  if fs.isLink(target) then fs.remove(target) end
+  if fs.isLink(target) then
+    fs.remove(target)
+  elseif fs.isDirectory(target) then
+    if not dirIsEmpty(target) then
+      return nil, "refusing to replace non-empty directory " .. target
+    end
+    fs.remove(target)
+  end
   local ok, err = fs.rename(tmp, target)
   if not ok then
     if fs.exists(target) or fs.isLink(target) then fs.remove(target) end
@@ -413,7 +430,16 @@ function dpkg.unpack(fpkgPath, opts)
       elseif entry.type == "l" then
         local parent = fs.dir(entry.path)
         if parent and parent ~= "" and parent ~= "/" then fpkg.ensureDir(parent) end
-        if fs.exists(entry.path) or fs.isLink(entry.path) then fs.remove(entry.path) end
+        if fs.isLink(entry.path) then
+          fs.remove(entry.path)
+        elseif fs.isDirectory(entry.path) then
+          if not dirIsEmpty(entry.path) then
+            error("refusing to replace non-empty directory " .. entry.path)
+          end
+          fs.remove(entry.path)
+        elseif fs.exists(entry.path) then
+          fs.remove(entry.path)
+        end
         local lok2, lerr2 = fs.link(entry.target, entry.path)
         if not lok2 then error(lerr2 or ("cannot link " .. entry.path)) end
         list[#list + 1] = entry.path
@@ -496,7 +522,12 @@ function dpkg.remove(name, opts)
   table.sort(files, function(a, b) return #a > #b end)
   local remaining = {}
   for _, path in ipairs(files) do
-    if conff[path] then
+    local islink = fs.isLink(path)
+    if islink then
+      fs.remove(path)
+    elseif fs.isDirectory(path) then
+      if dirIsEmpty(path) then fs.remove(path) end
+    elseif conff[path] then
       if purge then
         fs.remove(path)
       elseif fs.exists(path) or fs.isLink(path) then

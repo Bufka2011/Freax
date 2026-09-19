@@ -256,28 +256,22 @@ for i, dst in ipairs(files) do
       failN = failN + 1
       fails[#fails + 1] = dst .. ": " .. tostring(err)
     else
-      local sz = fs.size(tmp) or 0
-      if sz <= 0 then
+      -- 0-byte files are legitimate (.gitkeep); fetchFile already removed
+      -- the temp file on a real write error, so success means we're good.
+      -- temp + rename: a broken transfer never clobbers a good file
+      local rok, rerr = fs.rename(tmp, out)
+      if not rok then
+        fs.remove(out)
+        rok, rerr = fs.rename(tmp, out)
+      end
+      if not rok then
         fs.remove(tmp)
-        io.write("FAIL: empty download\n")
+        io.write("FAIL: " .. tostring(rerr) .. "\n")
         failN = failN + 1
-        fails[#fails + 1] = dst .. ": empty download"
+        fails[#fails + 1] = dst .. ": " .. tostring(rerr)
       else
-        -- temp + rename: a broken transfer never clobbers a good file
-        local rok, rerr = fs.rename(tmp, out)
-        if not rok then
-          fs.remove(out)
-          rok, rerr = fs.rename(tmp, out)
-        end
-        if not rok then
-          fs.remove(tmp)
-          io.write("FAIL: " .. tostring(rerr) .. "\n")
-          failN = failN + 1
-          fails[#fails + 1] = dst .. ": " .. tostring(rerr)
-        else
-          io.write("ok\n")
-          okN = okN + 1
-        end
+        io.write("ok\n")
+        okN = okN + 1
       end
     end
   end
@@ -340,14 +334,9 @@ if bad > 0 then
   return 1
 end
 
-if failN > 0 then
-  io.write(string.format("Done with %d ok, %d failed, %d skipped.\n",
-    okN, failN, skipN))
-  for _, f in ipairs(fails) do io.stderr:write("  " .. f .. "\n") end
-  io.stderr:write("webinstall: incomplete -- re-run after fixing the network\n")
-  return 1
-end
-io.write(string.format("Copied %d files (%d skipped).\n", okN, skipN))
+io.write(string.format("Copied %d files (%d skipped, %d failed).\n",
+  okN, skipN, failN))
+for _, f in ipairs(fails) do io.stderr:write("  " .. f .. "\n") end
 
 local label = tostring(opts.label or "freax")
 pcall(target.dev.setLabel, label)
@@ -371,4 +360,9 @@ if not opts.noreboot then
 end
 
 io.write("Done. Eject the install media and boot the drive.\n")
+if failN > 0 then
+  io.stderr:write("webinstall: " .. failN ..
+    " file(s) failed -- re-run to retry the rest\n")
+  return 1
+end
 return 0
