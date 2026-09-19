@@ -7,25 +7,31 @@ local args, opts = shell.parse(...)
 
 if opts.help then
   io.write("Usage: tree [OPTION]... [FILE]...\n")
-  io.write("  -a        show hidden files\n")
-  io.write("  -l        long listing format\n")
-  io.write("  -h        human-readable sizes\n")
-  io.write("  -p        append / to dirs\n")
-  io.write("  -Q        quote names\n")
-  io.write("  -f        full path prefix\n")
-  io.write("  -i        no indent lines\n")
-  io.write("  -r        reverse sort\n")
-  io.write("  -S        sort by size\n")
-  io.write("  -t        sort by modification time\n")
-  io.write("  -X        sort by extension\n")
-  io.write("  -C        no counting\n")
-  io.write("  -R        count root directories like other files\n")
-  io.write("  --full-time  with -l, print full ISO timestamps\n")
-  io.write("  --level=N    max depth\n")
-  io.write("  --color=WHEN auto/always/never\n")
-  io.write("  --si      powers of 1000\n")
+  io.write("  -a, --all             show hidden files\n")
+  io.write("  -l                    long listing format\n")
+  io.write("  -h, --human-readable  human-readable sizes\n")
+  io.write("  -p                    append / to dirs\n")
+  io.write("  -Q, --quote           quote names\n")
+  io.write("  -f                    full path prefix\n")
+  io.write("  -i                    no indent lines\n")
+  io.write("  -r, --reverse         reverse sort\n")
+  io.write("  -S                    sort by size\n")
+  io.write("  -t                    sort by modification time\n")
+  io.write("  -X                    sort by extension\n")
+  io.write("  -C                    no counting\n")
+  io.write("  -R                    count root directories like other files\n")
+  io.write("  --full-time           with -l, print full ISO timestamps\n")
+  io.write("  --level=N             max depth\n")
+  io.write("  --color=WHEN          auto/always/never\n")
+  io.write("  --si                  powers of 1000\n")
   return 0
 end
+
+-- OpenOS long-option aliases
+opts.a = opts.a or opts.all
+opts.r = opts.r or opts.reverse
+opts.Q = opts.Q or opts.quote
+opts.h = opts.h or opts["human-readable"]
 
 local roots = #args > 0 and args or {"."}
 local level = tonumber(opts.level) or math.huge
@@ -150,7 +156,7 @@ local function nod(n)
 end
 
 local function fmtSize(size)
-  if not opts.h and not opts["human-readable"] then return tostring(size) end
+  if not opts.h and not opts.si then return tostring(size) end
   local sizes = {"", "K", "M", "G"}
   local u = 1
   local pow = opts.si and 1000 or 1024

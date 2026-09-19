@@ -1,6 +1,6 @@
 -- filesystem: OpenOS-compatible API over the Freax kernel VFS (M2 compat).
 -- Mounts, fds and permission checks live in the kernel; this maps names.
--- Not supported: bind mounts, lastModified dates.
+-- Not supported: bind mounts (options.bind); umount is kernel-side.
 -- Symlinks are virtual (RAM-only, lost on reboot), like OpenOS.
 
 local fs = require("fs")
@@ -48,6 +48,18 @@ function filesystem.name(path)
   return parts[#parts]
 end
 
+-- path expressed relative to base (defaults to the path's own directory).
+function filesystem.relative(path, base)
+  local p = segments(filesystem.canonical(path))
+  local b = segments(filesystem.canonical(base or filesystem.path(path)))
+  local i = 1
+  while p[i] and b[i] and p[i] == b[i] do i = i + 1 end
+  local out = {}
+  for _ = i, #b do out[#out + 1] = ".." end
+  for j = i, #p do out[#out + 1] = p[j] end
+  return table.concat(out, "/")
+end
+
 filesystem.segments = segments
 
 -- fake proxy: address + space/label info from the kernel device list.
@@ -67,13 +79,18 @@ local function fakeFor(absPath)
   for _, d in ipairs(fs.devices()) do
     if d.addr == bestAddr then info = d break end
   end
+  local mnt
+  for _, m in ipairs(fs.mounts()) do if m.path == best then mnt = m break end end
   return {
     address = bestAddr,
-    isReadOnly = function() return not not info.readonly end,
+    isReadOnly = function() return (mnt and mnt.ro) or not not info.readonly end,
     spaceTotal = function() return info.total or 0 end,
     spaceUsed = function() return info.used or 0 end,
     getLabel = function() return info.label or "" end,
     setLabel = function() return nil, "denied" end,
+    lastModified = function(rel)
+      return filesystem.lastModified(filesystem.concat(best, rel or ""))
+    end,
   }, best
 end
 
@@ -136,7 +153,16 @@ end
 
 function filesystem.size(path) return fs.size(path) end
 
-function filesystem.lastModified() return 0 end
+function filesystem.lastModified(path)
+  if freax.fsLastModified then return freax.fsLastModified(path) end
+  return 0
+end
+
+function filesystem.isReadOnly(path)
+  if freax.fsIsReadOnly then return freax.fsIsReadOnly(path) end
+  local proxy = filesystem.get(path)
+  return proxy and proxy.isReadOnly() or false
+end
 
 function filesystem.list(path)
   local l = fs.list(path) or {}
@@ -157,6 +183,11 @@ function filesystem.rename(a, b) return os.rename(a, b) end
 function filesystem.copy(a, b) return fs.copy(a, b) end
 
 function filesystem.realPath(path)
+  if freax.fsRealPath then
+    local r, err = freax.fsRealPath(path)
+    if r then return r end
+    return nil, err
+  end
   return filesystem.canonical(fs.resolve(path))
 end
 

@@ -35,7 +35,8 @@ end
 -- serialized input, so one global cursor is correct: a child continues
 -- where the shell left off instead of restarting at 1,1.
 local termSt = { cx = 1, cy = 1, hist = {}, histPos = 0,
-  blink = true, curOn = false, savedX = 0, savedY = 0, savedCh = " ", phase = -1 }
+  blink = true, curOn = false, savedX = 0, savedY = 0, savedCh = " ", phase = -1,
+  fg = 0xFFFFFF, bg = 0x000000, fgPal = false, bgPal = false }
 
 ---------------------------------------------------------------
 -- VFS (M1, inspired by OpenOS lib/filesystem.lua, simplified)
@@ -492,7 +493,7 @@ local function ttyNewline()
   ttyShowCursor()
 end
 
-local function ttyWrite(s)
+local function ttyWriteRaw(s)
   local g = gpu0()
   if not g then return end
   ttyHideCursor()
@@ -522,6 +523,72 @@ local function ttyWrite(s)
   ttyShowCursor()
 end
 
+-- ANSI SGR colors for raw io.write output (ls/grep/tree). Only color
+-- is interpreted here; cursor/erase escapes are the tty lib's job.
+local ansiPal = {
+  0x000000,0xAA0000,0x00AA00,0xAAAA00,0x0000AA,0xAA00AA,0x00AAAA,0xAAAAAA,
+  0x555555,0xFF5555,0x55FF55,0xFFFF55,0x5555FF,0xFF55FF,0x55FFFF,0xFFFFFF }
+
+local function ansiSGR(text)
+  local g = gpu0()
+  local params = {}
+  for p in (text .. ";"):gmatch("([^;]*);") do
+    params[#params + 1] = tonumber(p) or 0
+  end
+  if #params == 0 then params[1] = 0 end
+  local i = 1
+  while i <= #params do
+    local n = params[i]
+    if n == 0 then
+      termSt.fg, termSt.fgPal, termSt.bg, termSt.bgPal = 0xFFFFFF, false, 0x000000, false
+      if g then pcall(g.setForeground, termSt.fg); pcall(g.setBackground, termSt.bg) end
+    elseif n == 39 then
+      termSt.fg = 0xFFFFFF
+      if g then pcall(g.setForeground, termSt.fg) end
+    elseif n == 49 then
+      termSt.bg = 0x000000
+      if g then pcall(g.setBackground, termSt.bg) end
+    elseif n >= 30 and n <= 37 then
+      termSt.fg = ansiPal[n - 30 + 1]
+      if g then pcall(g.setForeground, termSt.fg) end
+    elseif n >= 90 and n <= 97 then
+      termSt.fg = ansiPal[n - 90 + 9]
+      if g then pcall(g.setForeground, termSt.fg) end
+    elseif n >= 40 and n <= 47 then
+      termSt.bg = ansiPal[n - 40 + 1]
+      if g then pcall(g.setBackground, termSt.bg) end
+    elseif n >= 100 and n <= 107 then
+      termSt.bg = ansiPal[n - 100 + 9]
+      if g then pcall(g.setBackground, termSt.bg) end
+    end
+    i = i + 1
+  end
+end
+
+local function ttyWrite(s)
+  s = tostring(s)
+  if not s:find("\27", 1, true) then return ttyWriteRaw(s) end
+  local i = 1
+  while i <= #s do
+    local e = s:find("\27", i, true)
+    if not e then ttyWriteRaw(s:sub(i)); break end
+    if e > i then ttyWriteRaw(s:sub(i, e - 1)) end
+    local c2 = s:sub(e + 1, e + 1)
+    if c2 == "[" then
+      local k, final = e + 2
+      while k <= #s do
+        local ch = s:sub(k, k)
+        if ch:match("[0-9;?]") then k = k + 1 else final = ch break end
+      end
+      if final == "m" then ansiSGR(s:sub(e + 2, k - 1)) end
+      i = final and (k + 1) or (#s + 1)
+    else
+      i = e + 2
+    end
+  end
+end
+
+
 local function ttyClear()
   local g = gpu0()
   ttyHideCursor()
@@ -550,8 +617,8 @@ function ttyHideCursor()
     -- stale saved char would clobber it (first-char corruption bug).
     local ok, cur = pcall(g.get, termSt.savedX, termSt.savedY)
     if ok and cur == termSt.savedCh then
-      pcall(g.setForeground, 0xFFFFFF)
-      pcall(g.setBackground, 0x000000)
+      pcall(g.setForeground, termSt.fg, termSt.fgPal)
+      pcall(g.setBackground, termSt.bg, termSt.bgPal)
       pcall(g.set, termSt.savedX, termSt.savedY, termSt.savedCh)
     end
   end
@@ -573,8 +640,8 @@ function ttyShowCursor()
   pcall(g.setForeground, 0x000000)
   pcall(g.setBackground, 0xFFFFFF)
   pcall(g.set, cx, cy, termSt.savedCh)
-  pcall(g.setForeground, 0xFFFFFF)
-  pcall(g.setBackground, 0x000000)
+  pcall(g.setForeground, termSt.fg, termSt.fgPal)
+  pcall(g.setBackground, termSt.bg, termSt.bgPal)
   termSt.curOn = true
 end
 
@@ -595,13 +662,19 @@ end
 -- Blocking line reader for process p (history shared, one terminal).
 -- mask (string, or true for "*"): echo mask instead of input, skip
 -- history and recall, for password fields.
-local function ttyReadLine(p, mask)
+local function ttyReadLine(p, mask, seed)
   local g = gpu0()
   local buf = ""
   local sx, sy = termSt.cx, termSt.cy
   local w = ttySize()
   local echo = (mask == true and "*")
     or (type(mask) == "string" and mask ~= "" and mask) or nil
+  -- Optional seed history (term.read(history,...)): copy entries in so
+  -- up-arrow recall works for callers that carry their own list.
+  if type(seed) == "table" then
+    for i = 1, #seed do termSt.hist[i] = tostring(seed[i]) end
+    termSt.histPos = #termSt.hist + 1
+  end
   ttyHideCursor()
   -- Unicode-aware counts: #buf is bytes, but Cyrillic/CJK chars are
   -- multi-byte UTF-8. Cursor columns need display width (wlen),
@@ -895,6 +968,9 @@ local function makeEnv(p)
     local g = gpu0(); if g then return g.getResolution() end
     return 80, 25
   end
+  function freax.gpuCopy(x, y, w, h, dx, dy)
+    local g = gpu0(); if g then return g.copy(x, y, w, h, dx, dy) end
+  end
 
   ---- filesystem (M1 VFS, inspired by OpenOS) ----
   function freax.getCwd() return p.cwd or "/" end
@@ -951,6 +1027,34 @@ local function makeEnv(p)
     if not proxy or rest == "" then return 0 end
     local ok, r = pcall(proxy.size, rest)
     return (ok and r) or 0
+  end
+  -- canonical absolute path with symlinks expanded (OpenOS realPath).
+  function freax.fsRealPath(path)
+    local abs = vfsAbs(tostring(path), p.cwd or "/")
+    local exp, err = expandLinks(abs, true)
+    if not exp then return nil, err end
+    return exp
+  end
+  -- device mtime in ms, 0 for virtual dirs / unsupported devices.
+  function freax.fsLastModified(path)
+    local proxy, rest = withProxy(path)
+    if not proxy or rest == "" or not proxy.lastModified then return 0 end
+    local ok, r = pcall(proxy.lastModified, rest)
+    return (ok and r) or 0
+  end
+  function freax.fsIsReadOnly(path)
+    local abs = vfsAbs(tostring(path), p.cwd or "/")
+    for _, m in ipairs(mounts) do
+      if m.ro and (abs == m.path or abs:sub(1, #m.path + 1) == m.path .. "/") then
+        return true
+      end
+    end
+    local proxy = withProxy(path)
+    if proxy and proxy.isReadOnly then
+      local ok, r = pcall(proxy.isReadOnly)
+      return (ok and r) or false
+    end
+    return false
   end
   function freax.fsList(path)
     local proxy, rest, abs, err = withProxy(path)
@@ -1487,8 +1591,24 @@ local function makeEnv(p)
   end
   function freax.ttyGetCursor() return termSt.cx, termSt.cy end
   function freax.ttySize() return ttySize() end
-  function freax.ttyReadLine(mask) return ttyReadLine(p, mask) end
+  function freax.ttyReadLine(mask, seed) return ttyReadLine(p, mask, seed) end
   function freax.ttySetCompleter(fn) p.completer = fn end
+  -- Color state for the shared terminal. lib/tty maps ANSI SGR here so
+  -- io.write/ttyWrite render in color; cursor rendering restores it.
+  function freax.ttySetForeground(c, isPal)
+    local g = gpu0(); if not g then return end
+    termSt.fg, termSt.fgPal = c, not not isPal
+    pcall(g.setForeground, c, isPal)
+    return true
+  end
+  function freax.ttySetBackground(c, isPal)
+    local g = gpu0(); if not g then return end
+    termSt.bg, termSt.bgPal = c, not not isPal
+    pcall(g.setBackground, c, isPal)
+    return true
+  end
+  function freax.ttyGetForeground() return termSt.fg end
+  function freax.ttyGetBackground() return termSt.bg end
 
   env.freax = freax
 

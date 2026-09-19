@@ -12,7 +12,7 @@ io.write("Press 'Ctrl-C' to exit\n")
 pcall(function()
   repeat
     if #args > 0 then
-      evt = table.pack(event.pull(args[1]))
+      evt = table.pack(event.pullMultiple("interrupted", table.unpack(args)))
     else
       evt = table.pack(event.pull())
     end

@@ -35,6 +35,15 @@ function shell.setWorkingDirectory(dir)
   return nil, err
 end
 
+function shell.dir(path) return freax.fsDir(path) end
+
+function shell.getPath() return os.getenv("PATH") end
+function shell.setPath(value) os.setenv("PATH", value) end
+
+-- OpenOS initializes per-process alias/vars tables here; Freax keeps
+-- aliases in this module and env vars in the kernel, so this is a no-op.
+function shell.prime() return true end
+
 function shell.resolve(path, ext)
   path = tostring(path or "")
   if path:sub(1, 1) == "/" then

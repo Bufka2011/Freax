@@ -1,10 +1,11 @@
 local args = table.pack(...)
 
-if args[1] == "--help" then
+if args[1] == "--help" or args[1] == "-h" then
   io.write("Usage: yes [STRING]...\n")
+  io.write("Repeatedly output STRING (default 'y') until interrupted.\n")
   return
 end
-if args[1] == "--version" then
+if args[1] == "--version" or args[1] == "-V" then
   io.write("yes (Freax) 1.0\n")
   return
 end

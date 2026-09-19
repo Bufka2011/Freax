@@ -30,9 +30,18 @@ function term.getSize() return freax.ttySize() end
 
 -- OpenOS compat ------------------------------------------------
 function term.read(history, dobreak, hint, pwchar, filter)
-  -- history/dobreak/hint/filter: accepted, mostly ignored for now.
-  -- pwchar (string/true): mask echoed input, skip history (passwords).
-  return freax.ttyReadLine(pwchar)
+  -- dobreak/hint: accepted; the kernel reader always returns one line
+  -- and has no placeholder support. history seeds up-arrow recall.
+  local f = filter
+  if type(f) == "string" then
+    local pat = f
+    f = function(text) return text:match(pat) end
+  end
+  while true do
+    local line = freax.ttyReadLine(pwchar, history)
+    if type(f) ~= "function" or f(line) then return line end
+    pcall(freax.beep, 2000, 0.1)
+  end
 end
 
 function term.readLine() return freax.ttyReadLine() end
@@ -53,7 +62,20 @@ end
 local gpuBound = nil
 function term.bind(gpu, window)
   gpuBound = gpu
+  if window then term.window = window end
   return true
+end
+
+-- OpenOS term.internal.run_in_window: run func with the process window
+-- switched. Freax has a single shared terminal, so the window is only
+-- remembered; the call still runs.
+term.internal = {}
+function term.internal.run_in_window(window, func, ...)
+  local prev = term.window
+  term.window = window
+  local ret = table.pack(func(...))
+  term.window = prev
+  return table.unpack(ret, 1, ret.n)
 end
 
 function term.setCursorBlink(e) blink = not not e freax.ttySetBlink(blink) end

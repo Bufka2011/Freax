@@ -170,6 +170,29 @@ function event.pull(...)
   end
 end
 
+-- Pull the next signal whose name matches any of the given Lua patterns.
+-- OpenOS compat (lib/core/full_event.lua): optional leading timeout.
+function event.pullMultiple(...)
+  local args = table.pack(...)
+  local seconds
+  if type(args[1]) == "number" then
+    seconds = args[1]
+    args = table.pack(table.unpack(args, 2, args.n))
+  end
+  local filter
+  if args.n > 0 then
+    filter = function(...)
+      local s = table.pack(...)
+      if type(s[1]) ~= "string" then return false end
+      for i = 1, args.n do
+        if args[i] ~= nil and s[1]:match(args[i]) then return true end
+      end
+      return false
+    end
+  end
+  return event.pullFiltered(seconds, filter)
+end
+
 -- Signal injection is denied under Freax isolation.
 function event.push()
   return nil, "signal injection denied under Freax"

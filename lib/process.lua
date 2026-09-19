@@ -67,18 +67,24 @@ function process.removeHandle(handle, proc)
   end
 end
 
-function process.findProcess(name)
+function process.findProcess(id)
+  if id == nil then return process.info() end
   for _, p in ipairs(freax.ps()) do
-    if p.name == name or p.pid == name then return p end
+    if p.name == id or p.pid == id or tostring(p.pid) == tostring(id) then return p end
   end
   return nil
 end
 
-function process.running()
+function process.running(level)
   local info = process.info()
   if info then
     return info.path, nil, info.command
   end
+end
+
+-- Freax's scheduler is a fixed round-robin; there are no priority levels.
+function process.setPriority(pid, priority)
+  return nil, "process priorities are not supported"
 end
 
 process.list = setmetatable({}, {
@@ -86,7 +92,13 @@ process.list = setmetatable({}, {
     local acc = {}
     for _, p in ipairs(freax.ps()) do
       local data = handle_registry[p.pid] or { handles = {} }
-      acc[#acc + 1] = { pid = p.pid, command = p.name, data = data }
+      acc[#acc + 1] = {
+        pid = p.pid,
+        command = p.name,
+        path = "/bin/" .. p.name,
+        parent = p.parent,
+        data = data,
+      }
     end
     local i = 0
     return function()

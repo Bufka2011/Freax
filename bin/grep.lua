@@ -6,7 +6,7 @@ local args, options = shell.parse(...)
 local function printUsage(ostream, msg)
   local s = ostream or io.stdout
   if msg then s:write(msg .. "\n") end
-  s:write("Usage: grep [OPTION]... PATTERN [FILE]...\nExample: grep -i 'hello world' menu.lua main.lua\n")
+  s:write("Usage: grep [OPTION]... PATTERN [FILE]...\nExample: grep -i 'hello world' menu.lua main.lua\nfor more information, run: man grep\n")
 end
 
 local pop = function(...)
@@ -127,7 +127,7 @@ local function readLines()
       else
         meta.label = file
         local rp, reason = resolve(file)
-        if rp then
+        if rp and fs.exists(rp) then
           curHand, reason = io.open(rp, "r")
           if not curHand then
             local msg = string.format("failed to read from %s: %s", meta.label, reason or "unknown error")

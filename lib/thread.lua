@@ -206,6 +206,13 @@ function thread.create(fn, ...)
   end)
   threads[#threads + 1] = t
   t.status = "running" -- threads start out running
+  -- method-form API (OpenOS box_thread): status stays a field.
+  function t:join(timeout) return thread.join(self, timeout) end
+  function t:kill() return thread.kill(self) end
+  function t:suspend() return thread.suspend(self) end
+  function t:resume() return thread.resume(self) end
+  function t:detach() return thread.detach(self) end
+  function t:attach() return thread.attach(self) end
   return t
 end
 

@@ -34,17 +34,39 @@ function fs.isDirectory(p)
   return r, err
 end
 function fs.size(p) return freax.fsSize(p) end
+function fs.lastModified(p) return freax.fsLastModified(p) end
+function fs.realPath(p)
+  local r, err = freax.fsRealPath(p)
+  if r then return r end
+  return nil, err
+end
+function fs.isReadOnly(p) return freax.fsIsReadOnly(p) end
 function fs.list(p)
   local r, err = freax.fsList(p)
   return r, err
 end
 function fs.makeDirectory(p) return freax.fsMakeDir(p) end
 function fs.remove(p) return freax.fsRemove(p) end
+function fs.rename(a, b) return freax.fsRename(a, b) end
 function fs.link(target, linkpath) return freax.fsLink(target, linkpath) end
 function fs.isLink(p) return freax.fsIsLink(p) end
 function fs.mounts() return freax.fsMounts() end
 function fs.devices() return freax.fsDevices() end
 function fs.mount(addr, path, readonly) return freax.fsMount(addr, path, readonly) end
+function fs.umount(pathOrAddr) return freax.fsUmount(pathOrAddr) end
+
+-- OpenOS-style filesystem proxy for a path (used by tree/ls long format).
+function fs.get(p)
+  local abs = fs.resolve(p)
+  local _, _, mp, addr = freax.fsResolve(abs)
+  if not mp then return nil, "no such file system" end
+  local ro = fs.isReadOnly(abs)
+  return {
+    address = addr,
+    isReadOnly = function() return ro end,
+    lastModified = function() return fs.lastModified(abs) end,
+  }, mp
+end
 
 function fs.open(path, mode) return freax.fsOpen(path, mode) end
 function fs.read(fd, n) return freax.fsRead(fd, n) end

@@ -21,21 +21,47 @@ end
 
 function io.input(file)
   if file == nil then return current_input end
+  if type(file) == "string" then file = io.open(file, "r") end
   current_input = file
+  io.stdin = file
   return file
 end
 
 function io.output(file)
   if file == nil then return current_output end
+  if type(file) == "string" then file = io.open(file, "w") end
   current_output = file
+  io.stdout = file
   return file
 end
 
 function io.error(file)
   if file == nil then return current_error end
+  if type(file) == "string" then file = io.open(file, "w") end
   current_error = file
+  io.stderr = file
   return file
 end
+
+function io.read(...) return current_input:read(...) end
+function io.write(...) return current_output:write(...) end
+function io.close(file) return (file or current_output):close() end
+function io.flush() return current_output:flush() end
+
+function io.lines(filename, ...)
+  if filename then
+    local file, err = io.open(filename, "r")
+    if not file then error(err, 2) end
+    return file:lines(...)
+  end
+  return current_input:lines(...)
+end
+
+io.stdin, io.stdout, io.stderr = current_input, current_output, current_error
+-- Mark stdio backed by the shared terminal so programs can detect a tty.
+if type(base_io.stdin) == "table" then current_input.tty = base_io.stdin._stdio == true end
+if type(base_io.stdout) == "table" then current_output.tty = base_io.stdout._stdio == true end
+if type(base_io.stderr) == "table" then current_error.tty = base_io.stderr._stdio == true end
 
 function io.tmpfile()
   local name = os.tmpname()
@@ -61,9 +87,9 @@ end
 function io.type(object)
   if type(object) == "table" then
     local mt = getmetatable(object)
-    if mt == "file" then
-      local _, err = object:read(0)
-      return err and "closed file" or "file"
+    if mt == "file" or object._isfile then
+      if object.closed or object._closed then return "closed file" end
+      return "file"
     end
   end
   return nil
