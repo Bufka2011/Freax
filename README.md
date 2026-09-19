@@ -20,18 +20,21 @@ layout.
 
 ## Status
 
-Milestone reached: **M3** (OpenOS feature parity pass).
+Milestone reached: **M4** (OpenOS feature parity + shared module runtime).
 
 - Kernel: scheduler, process table, syscall sandbox, VFS with mounts
   (incl. read-only), pipes (8K buffer), virtual symlinks (RAM table, lost
   on reboot), parent PID tracking, graceful shutdown/reboot signalling,
-  autorun, ANSI SGR parsing in `ttyWrite`.
+  autorun, ANSI SGR parsing in `ttyWrite`, Ctrl+C foreground-tree kill,
+  and a shared module runtime (each library compiles once per machine and
+  dispatches to the running process).
 - Shell: bash-ish tokenizer, pipelines, redirects, builtins, PATH
   resolution, history, aliases, source. Parsing/execution now lives in the
   reusable `lib/sh.lua` (builtins, `;`/`&&`/`||`/`|`, glob, redirects),
   consumed by `bin/sh.lua`.
-- Filesystem: OC filesystem proxies via VFS, `/tmp` tmpfs, mounts at
-  `/mnt/<short>` for non-boot devices, `lib/devfs.lua` mounted at `/dev`.
+- Filesystem: OC filesystem proxies via VFS, tmpfs mounted at `/run`,
+  mounts at `/mnt/<short>` for non-boot devices, `lib/devfs.lua` mounted
+  lazily at `/dev` on first access.
 - Terminal: `lib/tty.lua` ANSI/VT100 stream (SGR colors, cursor
   moves/erase/save-restore, wrap toggle, scrolling, auto-flush) backed by
   `freax.*` tty syscalls.
@@ -49,7 +52,7 @@ Milestone reached: **M3** (OpenOS feature parity pass).
 
 ## Quick start
 
-Copy the repo files to an OC disk/diskettepreserving paths. Boot the computer.
+Copy the repo files to an OC disk/diskette, preserving paths. Boot the computer.
 
 Run `install` to install to a hard drive (needs a second writable HDD).
 
@@ -59,18 +62,19 @@ then `reboot` when asked (needs an internet card, versioned by `/VERSION`).
 ## Requirements
 
 - OpenComputers (GTNH fork, 1.7.10).
-- Minimum: Tier 1 computer, floppy.
-- Recommended: Tier 2+ computer, HDD, internet card.
+- Minimum RAM: ~384K in practice - the kernel and boot libraries dominate
+  the floor (the kernel alone is ~87K of Lua).
+- Recommended: a hard drive (for `install`) and an internet card (for `apt`).
 
 ## Files
 
-- `boot/kernel/main.lua` - the kernel (~1900 lines).
+- `boot/kernel/main.lua` - the kernel (~2600 lines).
 - `init.lua` - boot entry point.
 - `bin/*.lua` - programs and coreutils.
 - `lib/*.lua` - libraries (fs, shell, term, event, auth, thread, etc.).
 - `usr/man/*` - man pages (extensionless).
 - `etc/` - config (motd, passwd, shadow, hostname).
-- `manifest` - shipped-file list for demo-mode protection.
+- `manifest` - shipped-file list driving `install`, `apt`, and demo protection.
 - `selfcheck.lua` - dev smoke test (not installed).
 
 See AGENTS.md for detailed development conventions.
