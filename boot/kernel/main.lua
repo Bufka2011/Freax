@@ -702,6 +702,7 @@ end
 -- Blocking line reader for process p (history shared, one terminal).
 -- mask (string, or true for "*"): echo mask instead of input, skip
 -- history and recall, for password fields.
+local pasteQueue = ""
 local function ttyReadLine(p, mask, seed)
   local g = gpu0()
   local buf = ""
@@ -746,13 +747,40 @@ local function ttyReadLine(p, mask, seed)
     ttyShowCursor()
   end
   while true do
+    -- Pasted clipboard text is consumed first: every embedded newline
+    -- submits a line, so pasting a multi-line command runs it exactly
+    -- like typeahead. The rest stays queued for the next read.
+    if pasteQueue ~= "" then
+      local nl = pasteQueue:find("\n", 1, true)
+      if nl then
+        buf = buf .. pasteQueue:sub(1, nl - 1)
+        pasteQueue = pasteQueue:sub(nl + 1)
+        redraw()
+        termSt.cx = sx + bufWidth()
+        ttyNewline()
+        if not echo then
+          termSt.hist[#termSt.hist + 1] = buf
+          termSt.histPos = #termSt.hist + 1
+        end
+        return buf
+      end
+      buf = buf .. pasteQueue
+      pasteQueue = ""
+      redraw()
+    end
     local sig = takeMerged(p)
     while not sig do
       coroutine.yield()
       sig = takeMerged(p)
     end
     local name, _, char, code = table.unpack(sig, 1, sig.n)
-    if name == "key_down" then
+    if name == "clipboard" then
+      -- OC delivers the host clipboard as a `clipboard` signal; queue
+      -- the text so the block above can split it on newlines and echo it.
+      local value = type(char) == "string" and char or ""
+      value = value:gsub("\r\n", "\n"):gsub("\r", "\n"):gsub("\t", "  ")
+      if value ~= "" then pasteQueue = pasteQueue .. value end
+    elseif name == "key_down" then
       if code == KEY_C and ctrlDown then
         -- Ctrl+C at a prompt: cancel the line, keep the shell alive.
         -- (Foreground commands are killed by K.interrupt before this.)
