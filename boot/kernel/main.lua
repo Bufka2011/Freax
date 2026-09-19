@@ -773,11 +773,14 @@ local function ttyReadLine(p, mask, seed)
       coroutine.yield()
       sig = takeMerged(p)
     end
-    local name, _, char, code = table.unpack(sig, 1, sig.n)
+    local name, addr, char, code = table.unpack(sig, 1, sig.n)
     if name == "clipboard" then
       -- OC delivers the host clipboard as a `clipboard` signal; queue
       -- the text so the block above can split it on newlines and echo it.
-      local value = type(char) == "string" and char or ""
+      -- Signature varies by version/emulator: (name, addr, text) or
+      -- (name, text); take whichever string arg is present.
+      local value = (type(char) == "string" and char)
+        or (type(addr) == "string" and addr) or ""
       value = value:gsub("\r\n", "\n"):gsub("\r", "\n"):gsub("\t", "  ")
       if value ~= "" then pasteQueue = pasteQueue .. value end
     elseif name == "key_down" then
