@@ -55,64 +55,88 @@ local K = {
   0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 }
 
-local function bytes(s)
-  local b = {}
-  for i = 1, #s do b[i] = s:byte(i) end
-  return b
+local function processBlock(h, block)
+  local w = {}
+  for i = 0, 15 do
+    local o = i * 4
+    w[i] = (block:byte(o + 1) * 16777216) + (block:byte(o + 2) * 65536)
+      + (block:byte(o + 3) * 256) + (block:byte(o + 4))
+  end
+  for i = 16, 63 do
+    local s0 = bxor2(bxor2(rotr(w[i - 15], 7), rotr(w[i - 15], 18)), rshift(w[i - 15], 3))
+    local s1 = bxor2(bxor2(rotr(w[i - 2], 17), rotr(w[i - 2], 19)), rshift(w[i - 2], 10))
+    w[i] = add(w[i - 16], s0, w[i - 7], s1)
+  end
+  local a, bb, c, d, e, f, g, hh = h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8]
+  for i = 0, 63 do
+    local S1 = bxor2(bxor2(rotr(e, 6), rotr(e, 11)), rotr(e, 25))
+    local ch = bxor2(band2(e, f), band2(bnot(e), g))
+    local t1 = add(hh, S1, ch, K[i + 1], w[i])
+    local S0 = bxor2(bxor2(rotr(a, 2), rotr(a, 13)), rotr(a, 22))
+    local maj = bxor2(bxor2(band2(a, bb), band2(a, c)), band2(bb, c))
+    local t2 = add(S0, maj)
+    hh, g, f, e, d, c, bb, a = g, f, e, add(d, t1), c, bb, a, add(t1, t2)
+  end
+  h[1] = add(h[1], a)
+  h[2] = add(h[2], bb)
+  h[3] = add(h[3], c)
+  h[4] = add(h[4], d)
+  h[5] = add(h[5], e)
+  h[6] = add(h[6], f)
+  h[7] = add(h[7], g)
+  h[8] = add(h[8], hh)
+end
+
+-- Incremental hasher: feed chunks as they stream in, never hold the
+-- whole message. Used by apt/dpkg to verify downloads without OOM.
+function sha256.new()
+  local h = {
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+  }
+  local buf = ""
+  local len = 0
+  local obj = {}
+  function obj:update(chunk)
+    chunk = tostring(chunk or "")
+    len = len + #chunk
+    local data = chunk
+    if #buf > 0 then
+      data = buf .. data
+      buf = ""
+    end
+    local i = 1
+    while #data - i + 1 >= 64 do
+      processBlock(h, data:sub(i, i + 63))
+      i = i + 64
+    end
+    if i <= #data then buf = data:sub(i) end
+    return obj
+  end
+  function obj:hex()
+    local tail = buf
+    local bitlen = len * 8
+    tail = tail .. string.char(0x80)
+    while (#tail % 64) ~= 56 do tail = tail .. "\0" end
+    local hi = math.floor(bitlen / MOD)
+    local lo = bitlen % MOD
+    for _, v in ipairs({ hi, lo }) do
+      -- 32-bit big-endian length words
+      for i = 3, 0, -1 do
+        tail = tail .. string.char(math.floor(v / (256 ^ i)) % 256)
+      end
+    end
+    for i = 1, #tail, 64 do processBlock(h, tail:sub(i, i + 63)) end
+    return string.format("%08x%08x%08x%08x%08x%08x%08x%08x",
+      h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8])
+  end
+  return obj
 end
 
 function sha256.digest(msg)
-  msg = tostring(msg)
-  local b = bytes(msg)
-  local bitlen = #b * 8
-  b[#b + 1] = 0x80
-  while (#b % 64) ~= 56 do b[#b + 1] = 0 end
-  local hi = math.floor(bitlen / MOD)
-  local lo = bitlen % MOD
-  for _, v in ipairs({ hi, lo }) do
-    -- 32-bit big-endian length words
-    for i = 3, 0, -1 do
-      b[#b + 1] = math.floor(v / (256 ^ i)) % 256
-    end
-  end
-
-  local h0, h1, h2, h3, h4, h5, h6, h7 =
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
-
-  local w = {}
-  for chunk = 1, #b, 64 do
-    for i = 0, 15 do
-      local o = chunk + i * 4
-      w[i] = ((b[o] or 0) * 16777216) + ((b[o + 1] or 0) * 65536)
-        + ((b[o + 2] or 0) * 256) + ((b[o + 3] or 0))
-    end
-    for i = 16, 63 do
-      local s0 = bxor2(bxor2(rotr(w[i - 15], 7), rotr(w[i - 15], 18)), rshift(w[i - 15], 3))
-      local s1 = bxor2(bxor2(rotr(w[i - 2], 17), rotr(w[i - 2], 19)), rshift(w[i - 2], 10))
-      w[i] = add(w[i - 16], s0, w[i - 7], s1)
-    end
-    local a, bb, c, d, e, f, g, h = h0, h1, h2, h3, h4, h5, h6, h7
-    for i = 0, 63 do
-      local S1 = bxor2(bxor2(rotr(e, 6), rotr(e, 11)), rotr(e, 25))
-      local ch = bxor2(band2(e, f), band2(bnot(e), g))
-      local t1 = add(h, S1, ch, K[i + 1], w[i])
-      local S0 = bxor2(bxor2(rotr(a, 2), rotr(a, 13)), rotr(a, 22))
-      local maj = bxor2(bxor2(band2(a, bb), band2(a, c)), band2(bb, c))
-      local t2 = add(S0, maj)
-      h, g, f, e, d, c, bb, a = g, f, e, add(d, t1), c, bb, a, add(t1, t2)
-    end
-    h0 = add(h0, a)
-    h1 = add(h1, bb)
-    h2 = add(h2, c)
-    h3 = add(h3, d)
-    h4 = add(h4, e)
-    h5 = add(h5, f)
-    h6 = add(h6, g)
-    h7 = add(h7, h)
-  end
-  return string.format("%08x%08x%08x%08x%08x%08x%08x%08x",
-    h0, h1, h2, h3, h4, h5, h6, h7)
+  local h = sha256.new()
+  h:update(tostring(msg))
+  return h:hex()
 end
 
 return sha256

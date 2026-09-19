@@ -49,6 +49,12 @@ Milestone reached: **M4** (OpenOS feature parity + shared module runtime).
   components/lshw/address/primary, flash, label, resolution, redstone,
   wget, pastebin, man, login, passwd, su, whoami, adduser, useradd,
   userdel.
+- Package management: `apt`/`dpkg` with repositories (Debian-style
+  `deb` source lines), index download and verification, dependency
+  resolution, install/remove/upgrade/purge, maintainer scripts
+  (`preinst`/`postinst`/`prerm`/`postrm`), and conffile handling.
+  Archives use the uncompressed `.fpkg` format. `apt sysupdate` /
+  `apt sysupgrade` retain the legacy manifest-based OS self-update.
 
 ## Quick start
 
@@ -56,8 +62,10 @@ Copy the repo files to an OC disk/diskette, preserving paths. Boot the computer.
 
 Run `install` to install to a hard drive (needs a second writable HDD).
 
-After that, update without leaving the game: `apt update`, `apt upgrade`,
-then `reboot` when asked (needs an internet card, versioned by `/VERSION`).
+After that, use packages without leaving the game: `apt update`, then
+`apt install PACKAGE`, `apt upgrade` (needs an internet card). OS
+self-update is separate: `apt sysupdate`, `apt sysupgrade`, then
+`reboot` when asked (versioned by `/VERSION`).
 
 ## Requirements
 
@@ -71,10 +79,39 @@ then `reboot` when asked (needs an internet card, versioned by `/VERSION`).
 - `boot/kernel/main.lua` - the kernel (~2600 lines).
 - `init.lua` - boot entry point.
 - `bin/*.lua` - programs and coreutils.
-- `lib/*.lua` - libraries (fs, shell, term, event, auth, thread, etc.).
+- `bin/apt.lua`, `bin/dpkg.lua` - package management front ends.
+- `bin/dpkg-deb.lua` - build and inspect `.fpkg` archives.
+- `bin/apt-ftparchive.lua` - generate repository `Packages`/`Release` indexes.
+- `lib/*.lua` - libraries (fs, shell, term, event, auth, thread, etc.);
+  `lib/fpkg.lua`, `lib/dpkg.lua`, `lib/apt.lua` implement the package stack.
 - `usr/man/*` - man pages (extensionless).
-- `etc/` - config (motd, passwd, shadow, hostname).
-- `manifest` - shipped-file list driving `install`, `apt`, and demo protection.
+- `etc/` - config (motd, passwd, shadow, hostname, apt sources).
+- `manifest` - shipped-file list driving `install`, `apt sysupgrade`, and
+  demo protection.
 - `selfcheck.lua` - dev smoke test (not installed).
+
+### Packages
+
+A package is a plain, uncompressed `.fpkg` archive: a control stanza
+plus data entries for regular files, conffiles, directories, and
+symlinks. `dpkg-deb -b` builds one from a `DEBIAN/control` directory;
+on success it prints the archive's SHA256 and size for indexing.
+`dpkg` drives unpack/configure/remove and records state under
+`/var/lib/dpkg`; `apt` adds repositories, dependency resolution, and
+downloads.
+
+Host a repository with the standard tree:
+
+```
+dists/<suite>/Release
+dists/<suite>/<component>/binary-all/Packages
+pool/<component>/<package>_<version>_all.fpkg
+```
+
+Build the indexes from the repository root with `apt-ftparchive
+packages pool` and `apt-ftparchive release dists/<suite>`, then point
+`/etc/apt/sources.list` at it with a `deb URI <suite> <component>`
+line. OS self-update (`apt sysupdate`/`sysupgrade`) still uses the bare
+URL fallback and is independent of package sources.
 
 See AGENTS.md for detailed development conventions.

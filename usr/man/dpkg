@@ -1,0 +1,95 @@
+NAME
+  dpkg - install, remove, and inspect Freax packages
+
+SYNOPSIS
+  dpkg -i PACKAGE.fpkg...
+  dpkg --unpack PACKAGE.fpkg...
+  dpkg --configure PACKAGE...
+  dpkg --configure -a
+  dpkg -r PACKAGE...
+  dpkg -P PACKAGE...
+  dpkg -l [PATTERN]
+  dpkg -L PACKAGE
+  dpkg -S PATH
+  dpkg -s PACKAGE
+
+DESCRIPTION
+  dpkg is the low-level package tool. It unpacks .fpkg archives, runs
+  maintainer scripts, records what is installed in
+  /var/lib/dpkg/status, and removes packages. It performs no dependency
+  resolution, does not download anything, and does not consult a
+  repository; those jobs belong to apt. Use dpkg -i to install a local
+  archive, and apt to install by name.
+
+  A package moves through unpacking and configuration. It is not
+  considered installed until --configure has run the packaged postinst
+  script. dpkg records states such as installed, unpacked,
+  half-configured, half-installed, config-files, and not-installed so
+  that an interrupted operation can be resumed.
+
+  dpkg takes a lock at /var/lib/dpkg/lock while it changes the database;
+  concurrent dpkg operations fail rather than corrupt it.
+
+COMMANDS
+  -i, --install PACKAGE.fpkg...
+    Unpack each archive and then configure it. This is the normal way to
+    install a local file.
+  --unpack PACKAGE.fpkg...
+    Unpack each archive without configuring it.
+  --configure PACKAGE...
+    Configure one or more already-unpacked packages by running their
+    postinst scripts.
+  --configure -a
+    Configure every package that is unpacked but not yet configured.
+  -r, --remove PACKAGE...
+    Remove packages. Files listed by the package are deleted, but
+    conffiles are kept and the package is left in the config-files state.
+    The prerm and postrm scripts run with the "remove" action.
+  -P, --purge PACKAGE...
+    Remove packages and delete their conffiles as well. The postrm
+    script runs with the "purge" action.
+  -l, --list [PATTERN]
+    List packages known to dpkg with their state and short description.
+    A PATTERN filters by name. With no pattern, everything is listed.
+  -L, --listfiles PACKAGE
+    List the files owned by an installed package, one absolute path per
+    line.
+  -S, --search PATH
+    Show which installed package owns PATH.
+  -s, --status PACKAGE
+    Print the full control fields and status of a package.
+  --get-selections
+    Print every package and its selection state.
+  --print-architecture
+    Print the architecture dpkg targets (always all on Freax).
+  --version
+    Print the dpkg version.
+  -h, --help
+    Print usage.
+
+FILES
+  /var/lib/dpkg/status
+  /var/lib/dpkg/lock
+  /var/lib/dpkg/info/<package>.list
+  /var/lib/dpkg/info/<package>.sha256sums
+  /var/lib/dpkg/info/<package>.conffiles
+  /var/lib/dpkg/info/<package>.preinst|postinst|prerm|postrm
+
+EXAMPLES
+  dpkg -i hello_1.0_all.fpkg
+    Install a local archive.
+
+  dpkg --configure -a
+    Finish packages left half-configured by an interrupted operation.
+
+  dpkg -l hello
+    Show whether hello is installed.
+
+  dpkg -L hello
+    List the files hello installed.
+
+  dpkg -S /bin/hello
+    Show which package owns /bin/hello.
+
+  dpkg -P hello
+    Remove hello and its conffiles.

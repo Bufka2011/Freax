@@ -4,6 +4,7 @@
 bin/address.lua
 bin/adduser.lua
 bin/alias.lua
+bin/apt-ftparchive.lua
 bin/apt.lua
 bin/cat.lua
 bin/cd.lua
@@ -13,6 +14,8 @@ bin/cp.lua
 bin/date.lua
 bin/df.lua
 bin/dmesg.lua
+bin/dpkg-deb.lua
+bin/dpkg.lua
 bin/du.lua
 bin/echo.lua
 bin/edit.lua
@@ -86,6 +89,7 @@ etc/systemd/console.unit
 init.lua
 VERSION
 # -- lib
+lib/apt.lua
 lib/auth.lua
 lib/bit32.lua
 lib/buffer.lua
@@ -93,9 +97,11 @@ lib/colors.lua
 lib/component.lua
 lib/computer.lua
 lib/devfs.lua
+lib/dpkg.lua
 lib/eeprom.lua
 lib/event.lua
 lib/filesystem.lua
+lib/fpkg.lua
 lib/fs.lua
 lib/internet.lua
 lib/io.lua
@@ -111,6 +117,7 @@ lib/sh.lua
 lib/sha256.lua
 lib/shell.lua
 lib/sides.lua
+lib/sysupdate.lua
 lib/term.lua
 lib/text.lua
 lib/thread.lua
@@ -128,6 +135,7 @@ selfcheck.lua
 # -- usr/man
 usr/man/address
 usr/man/alias
+usr/man/apt-ftparchive
 usr/man/apt
 usr/man/cat
 usr/man/cd
@@ -136,6 +144,8 @@ usr/man/cp
 usr/man/date
 usr/man/df
 usr/man/dmesg
+usr/man/dpkg
+usr/man/dpkg-deb
 usr/man/echo
 usr/man/edit
 usr/man/grep

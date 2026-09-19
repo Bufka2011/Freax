@@ -1,4 +1,25 @@
-# Freax update source. Repo root mirrors the installed root (/),
-# so apt fetches <source><path> for each entry in the manifest.
-# Default: GitHub raw. Point at a mirror to override.
-https://raw.githubusercontent.com/Bufka2011/Freax/main/
+# Freax package sources. One repository per line, Debian-style:
+#
+#   deb URI SUITE COMPONENT [COMPONENT...]
+#
+# Freax is single-architecture, so the architecture field is optional and
+# every index is binary-all. A URI points at the repository root, which
+# has this layout:
+#
+#   <URI>/dists/<SUITE>/Release
+#   <URI>/dists/<SUITE>/<COMPONENT>/binary-all/Packages
+#   <URI>/pool/<COMPONENT>/<package>_<version>_all.fpkg
+#
+# Default upstream repository:
+deb https://raw.githubusercontent.com/Bufka2011/Freax/main/apt freax main
+#
+# Add mirrors below or drop extra files in /etc/apt/sources.list.d/*.list
+# using the same deb-line syntax, for example:
+#
+#   deb http://192.168.1.5:8000/repo freax main
+#
+# The legacy OS self-updater (`apt sysupdate` / `apt sysupgrade`) reads this
+# file differently: it ignores deb lines and uses the first bare URL it finds,
+# falling back to the built-in GitHub URL when there is none. Keep this file
+# to deb lines only; a bare URL here would override the self-updater default.
+# Pass --source=URL to sysupdate/sysupgrade to point at another OS mirror.

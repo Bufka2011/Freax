@@ -1,60 +1,213 @@
 NAME
-  apt - update Freax from the network without leaving the game
+  apt - package manager for Freax
 
 SYNOPSIS
-  apt update [--source=URL]
-  apt upgrade [--yes] [--force] [--source=URL]
-  apt version
-  apt sources
+  apt update
+  apt install PACKAGE...
+  apt remove PACKAGE...
+  apt upgrade
+  apt search PATTERN
+  apt show PACKAGE
+  apt list [--installed|--upgradable] [PATTERN]
+  apt policy PACKAGE
+  apt download PACKAGE...
+  apt clean
+  apt autoremove
+  apt sysupdate
+  apt sysupgrade
 
 DESCRIPTION
-  apt pulls core OS files over HTTP from an update source (by default
-  the GitHub project) and installs them onto the running hard drive.
-  No world restart is needed: files stream straight to disk in small
-  chunks, half-written downloads are never left in place (temp file
-  plus rename), and your accounts and config (/etc/passwd,
-  /etc/shadow, /etc/hostname, custom /etc/apt/sources.list, /home)
-  are never overwritten.
+  apt manages Freax packages (.fpkg archives) fetched from one or more
+  repositories. It downloads and verifies repository indexes, resolves
+  dependencies, and drives dpkg to unpack, configure, and remove
+  packages.
 
-  Kernel and boot files take effect on the next in-game reboot, not
-  instantly. apt prompts for that reboot; everything else (shell,
-  tools, libs, man pages) is live for the next command you run.
+  apt requires an internet card (see `man wget`). Package archives and
+  indexes are streamed to disk in small chunks; a failed download never
+  leaves a partial file in place (temp file plus rename). SHA256 sums
+  from the repository index are checked before anything is installed.
 
-  apt requires an internet card (see `man wget`).
+  Two separate update mechanisms share this command. Package operations
+  (`update`, `install`, `upgrade`, ...) use repositories listed in
+  /etc/apt/sources.list. Legacy OS self-update still exists as `apt
+  sysupdate` and `apt sysupgrade`, which pull core OS files from a single
+  URL.
 
 COMMANDS
   update
-    Fetch the remote VERSION and manifest, compare with the local
-    /VERSION, and report. Caches the manifest for `upgrade`.
+    Refresh the package lists from every configured repository. Fetches
+    each suite's Release file and component Packages indexes into
+    /var/lib/apt/lists. Run this before installing or upgrading so apt
+    knows what is available.
   upgrade
-    Download every manifest file and install it. Prompts before
-    starting unless --yes is given. Skips files already up to date
-    unless --force is given.
+    Upgrade every installed package that has a newer candidate. Never
+    removes a package or installs a new one to satisfy dependencies;
+    packages that would require that are left as-is.
+  full-upgrade, dist-upgrade
+    Upgrade installed packages, allowing removals and new installs when
+    required to complete the upgrade.
+  install PACKAGE...
+    Install or upgrade the named packages. Dependencies are resolved
+    first: the plan is printed, and confirmation is requested unless
+    --yes is given. Alternatives and Recommendations are resolved by the
+    same rules as Debian.
+  reinstall PACKAGE...
+    Download and install the newest candidate even if that version is
+    already installed.
+  remove PACKAGE..., rm
+    Remove the named packages. Files listed by the package are deleted,
+    but conffiles are kept and the package is left in the config-files
+    state. Dependencies that become unused are not removed unless
+    autoremove is used.
+  purge PACKAGE...
+    Remove packages and delete their conffiles too.
+  autoremove
+    Remove packages that were installed automatically as dependencies
+    and are no longer required by anything.
+  search PATTERN
+    Search package names and descriptions for PATTERN (case-insensitive
+    substring). Prints one line per matching package with its name,
+    installed state, and short description.
+  show PACKAGE, info PACKAGE
+    Print the full control fields for a package. If several versions are
+    available, all of them are shown.
+  list [--installed|--upgradable] [PATTERN]
+    List packages. With no option, lists every package known to the
+    index. --installed lists packages in the dpkg database, and
+    --upgradable lists installed packages with a newer candidate. A
+    PATTERN filters by name.
+  policy PACKAGE
+    Show which candidate version apt would install, which versions are
+    available, and which repository they come from.
+  download PACKAGE...
+    Download the candidate archives into /var/cache/apt/archives without
+    installing them. Use --download-only with install to do the same as
+    part of an install run.
+  clean, autoclean
+    Delete downloaded .fpkg archives. clean removes everything;
+    autoclean removes only archives no longer needed.
   version
-    Print the local version (works offline).
-  sources
-    Print the effective update source (works offline).
+    Print the apt version (works offline).
+  sources, source
+    Print the effective repository list (works offline). With --os, print
+    the legacy OS self-update source instead.
+  sysupdate
+    Legacy OS self-update: fetch the remote VERSION and manifest,
+    compare them with the local /VERSION, and cache the manifest for
+    sysupgrade. OS files are not package-managed; this is unchanged from
+    earlier releases.
+  sysupgrade
+    Legacy OS self-update: download every manifest entry and install it
+    over the running hard drive. /etc/passwd, /etc/shadow, /etc/hostname,
+    /home, and a custom /etc/apt/sources.list are preserved. Kernel and
+    boot files take effect on the next in-game reboot.
+  help
+    Print usage.
 
 OPTIONS
+  -y, --yes
+    Assume yes to every confirmation prompt. Required for unattended
+    installs.
+  -f, --force
+    Override safety checks. Forces operations that apt would otherwise
+    refuse (for example, breaking a package that other installed
+    packages depend on) and, for sysupgrade, re-downloads files whose
+    local and remote versions already match.
+  -q, --quiet
+    Print less output.
+  -V
+    Show package version numbers alongside package names.
+  --download-only
+    Download the archives but do not unpack or configure them.
+  --no-install-recommends
+    Do not install Recommended packages; only Depends and Pre-Depends
+    are followed.
+  --reinstall
+    Reinstall packages even when the installed version is already the
+    newest.
+  --purge
+    With remove, delete conffiles as well (same as purge).
+  --autoremove
+    After an operation, remove automatically installed dependencies that
+    are no longer needed.
   --source=URL
-    Use URL as the update source for this run instead of
-    /etc/apt/sources.list. The repo root mirrors the installed
-    root (/), so apt fetches URL + path per manifest entry.
-  --yes, -y
-    Do not prompt before downloading (upgrade only).
-  --force, -f
-    Re-download even when local and remote versions match.
+    Use URL as the legacy OS update source for this sysupdate/sysupgrade
+    run instead of /etc/apt/sources.list.
+
+MAINTAINER SCRIPTS
+  A package may ship four Lua scripts, stored under
+  /var/lib/dpkg/info/<package>.<name> and run by dpkg at the matching
+  point in the package's life cycle:
+    preinst   before the package is unpacked
+    postinst  after the package is unpacked (usually configuration)
+    prerm     before the package is removed
+    postrm    after the package is removed
+  Each script sees a global `arg` table where arg[1] is the action
+  ("install", "configure", "upgrade", "remove", "purge", or
+  "abort-upgrade") and arg[2] is the previously installed version during
+  an upgrade. A script that fails aborts the operation and leaves the
+  package in a half-configured or half-installed state.
+
+CONFFILES
+  Files declared as conffiles are configuration files. On upgrade, a
+  conffile the user has edited is preserved: the new version is written
+  next to it as <path>.dpkg-new for the user to merge. remove keeps
+  conffiles and marks the package config-files; purge deletes them.
+
+REPOSITORY LAYOUT
+  A repository is a tree rooted at the URL in a `deb` line:
+    <uri>/dists/<suite>/Release
+    <uri>/dists/<suite>/<component>/binary-all/Packages
+    <uri>/pool/<component>/<package>_<version>_all.fpkg
+  Freax is single-architecture; every index is binary-all. Release lists
+  SHA256 sums for the component indexes, and each Packages stanza lists
+  the Filename, Size, and SHA256 of its archive. Packages under pool/ are
+  referenced by Filename relative to the repository root.
+
+  To host your own repository, lay files out as above and generate the
+  indexes with the tools in this system (see `man dpkg-deb` and
+  `man apt-ftparchive`):
+    dpkg-deb -b mypkg mypkg_1.0_all.fpkg
+    mkdir -p pool/main
+    mv mypkg_1.0_all.fpkg pool/main/
+    apt-ftparchive packages pool > Packages
+    mkdir -p dists/freax/main/binary-all
+    mv Packages dists/freax/main/binary-all/Packages
+    apt-ftparchive release dists/freax > dists/freax/Release
+  Serve the repository root over HTTP, then add a line to
+  /etc/apt/sources.list:
+    deb http://host/repo freax main
 
 FILES
-  /VERSION, /manifest
   /etc/apt/sources.list
+  /etc/apt/sources.list.d/*.list
+  /var/lib/apt/lists/
+  /var/cache/apt/archives/
+  /var/lib/dpkg/status
+  /var/lib/dpkg/info/
+  /VERSION, /manifest
 
 EXAMPLES
   apt update
-    Check for a new release.
+    Refresh the package lists.
+
+  apt install hello
+    Install hello and its dependencies.
 
   apt upgrade
-    Install it, then reboot when asked.
+    Upgrade all installed packages to their newest versions.
 
-  apt upgrade --source=http://192.168.1.5:8000/
-    Update from a local test mirror.
+  apt list --upgradable
+    Show which installed packages have newer versions available.
+
+  apt show hello
+    Print hello's control fields.
+
+  apt remove --purge hello
+    Remove hello and delete its conffiles.
+
+  apt sysupdate
+    Check for a new OS release (legacy updater).
+
+  apt sysupgrade --source=http://192.168.1.5:8000/
+    Update the OS from a local test mirror.

@@ -1,0 +1,50 @@
+NAME
+  apt-ftparchive - generate repository index files
+
+SYNOPSIS
+  apt-ftparchive packages DIR
+  apt-ftparchive release SUITEDIR
+
+DESCRIPTION
+  apt-ftparchive builds the index files that apt reads. It scans a
+  directory of .fpkg archives and writes a Packages index, or scans a
+  suite directory and writes its Release file. Output goes to stdout;
+  redirect it into place.
+
+  There is no signing and no compression. Release lists the SHA256 and
+  size of every file below the suite directory so apt can verify the
+  component indexes it downloads.
+
+COMMANDS
+  packages DIR
+    Recursively find every *.fpkg under DIR, read each archive's control
+    fields, and print one Packages stanza per archive. Each stanza
+    carries the package's control fields plus:
+      Filename:  path relative to the current working directory, using
+                 forward slashes and no leading ./
+      Size:      archive size in bytes
+      SHA256:    archive SHA256
+    Run it from the repository root so Filename is repository-relative:
+      apt-ftparchive packages pool > dists/freax/main/binary-all/Packages
+  release SUITEDIR
+    Print a Release stanza for the suite. Components are the
+    directories directly under SUITEDIR; the architecture is always all.
+    Includes Suite, Codename, Date, Architectures, and Components, plus
+    a SHA256 and Size line for every file recursively under SUITEDIR,
+    excluding the Release file itself:
+      apt-ftparchive release dists/freax > dists/freax/Release
+
+REPOSITORY LAYOUT
+  A repository produced with these tools looks like:
+    dists/freax/Release
+    dists/freax/main/binary-all/Packages
+    pool/main/<package>_<version>_all.fpkg
+  Place archives under pool/<component>/ and generate the index from the
+  repository root so the Filename fields point at that location.
+
+EXAMPLES
+  apt-ftparchive packages pool > dists/freax/main/binary-all/Packages
+    Build the main component index.
+
+  apt-ftparchive release dists/freax > dists/freax/Release
+    Build the release file for the freax suite.

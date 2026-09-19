@@ -1,0 +1,62 @@
+NAME
+  dpkg-deb - build and inspect Freax package archives
+
+SYNOPSIS
+  dpkg-deb -b DIR [OUT.fpkg]
+  dpkg-deb -c PACKAGE.fpkg
+  dpkg-deb -I PACKAGE.fpkg
+  dpkg-deb -x PACKAGE.fpkg DIR
+  dpkg-deb -e PACKAGE.fpkg DIR
+
+DESCRIPTION
+  dpkg-deb works with .fpkg archives, Freax's uncompressed package
+  format. An archive begins with the magic line FREAXPKG 1 and ends with
+  @end. It holds a control entry, optional maintainer scripts, and one
+  entry per installed path: regular files, conffiles, directories, and
+  symlinks. There is no compression and no checksum inside the archive;
+  repository indexes carry the SHA256 of the whole file (see
+  `man apt-ftparchive`).
+
+  For a build directory DIR, dpkg-deb reads DIR/DEBIAN/control and the
+  optional scripts DIR/DEBIAN/preinst, postinst, prerm, postrm, and the
+  optional list DEBIAN/conffiles (absolute paths that should be treated
+  as conffiles). Every other path under DIR becomes a data entry rooted
+  at /, so DIR/bin/tool installs to /bin/tool.
+
+  On a successful build, dpkg-deb prints the archive's SHA256 and size.
+  Repository tooling uses these values in Packages stanzas.
+
+COMMANDS
+  -b, --build DIR [OUT.fpkg]
+    Build an archive from DIR. If OUT is omitted the archive is written
+    in the current directory as <package>_<version>_all.fpkg, using the
+    Package and Version fields from control.
+  -c, --contents PACKAGE.fpkg
+    List the archive's entries and their paths.
+  -I, --info PACKAGE.fpkg
+    Print the control fields and any maintainer scripts in the archive.
+  -x, --extract PACKAGE.fpkg DIR
+    Extract the package's data files into DIR.
+  -e, --control PACKAGE.fpkg DIR
+    Extract the package's control files and scripts into DIR.
+
+FILES
+  DIR/DEBIAN/control
+  DIR/DEBIAN/preinst
+  DIR/DEBIAN/postinst
+  DIR/DEBIAN/prerm
+  DIR/DEBIAN/postrm
+  DIR/DEBIAN/conffiles
+
+EXAMPLES
+  dpkg-deb -b hello
+    Build hello_1.0_all.fpkg from the hello directory.
+
+  dpkg-deb -I hello_1.0_all.fpkg
+    Show the control fields of the built package.
+
+  dpkg-deb -c hello_1.0_all.fpkg
+    List everything the package would install.
+
+  dpkg-deb -x hello_1.0_all.fpkg /tmp/hello
+    Unpack the data files for inspection.
