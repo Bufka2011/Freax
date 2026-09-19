@@ -27,7 +27,20 @@ padTo = padTo + 8 - padTo % 8
 for _, d in ipairs(matches) do
   io.write(text.padRight(d.type, padTo) .. d.address .. "\n")
   if options.l then
-    io.write("  (method docs need proxy access: unsupported under Freax)\n")
+    local ok, proxy = pcall(require, "component")
+    if ok then
+      proxy = proxy.proxy(d.address)
+      local methods = {}
+      for name, member in pairs(proxy) do
+        if type(member) == "table" or type(member) == "function" then
+          table.insert(methods, name)
+        end
+      end
+      table.sort(methods)
+      for _, name in ipairs(methods) do
+        io.write("  " .. name .. " (method)\n")
+      end
+    end
   end
   count = count - 1
   if count <= 0 then break end

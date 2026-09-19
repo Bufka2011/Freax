@@ -50,7 +50,11 @@ function term.getGlobalArea()
   return 1, 1, w, h
 end
 
-function term.bind() return true end
+local gpuBound = nil
+function term.bind(gpu, window)
+  gpuBound = gpu
+  return true
+end
 
 function term.setCursorBlink(e) blink = not not e freax.ttySetBlink(blink) end
 function term.getCursorBlink() return blink end

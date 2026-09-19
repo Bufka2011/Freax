@@ -1321,8 +1321,20 @@ local function makeEnv(p)
     if r == false then return nil, "rejected" end
     return true
   end
-  function freax.reboot() pcall(computer.shutdown, true) end
-  function freax.shutdown() pcall(computer.shutdown, false) end
+  function freax.reboot()
+    computer.pushSignal("shutdown")
+    local deadline = computer.uptime() + 0.05
+    while computer.uptime() < deadline do coroutine.yield() end
+    for _, q in ipairs(procs) do q.dead = true end
+    pcall(computer.shutdown, true)
+  end
+  function freax.shutdown()
+    computer.pushSignal("shutdown")
+    local deadline = computer.uptime() + 0.05
+    while computer.uptime() < deadline do coroutine.yield() end
+    for _, q in ipairs(procs) do q.dead = true end
+    pcall(computer.shutdown, false)
+  end
 
   ---- machine info (safe, read-only; for computer shim + free/uptime) ----
   function freax.freeMem()
@@ -2090,6 +2102,7 @@ function K.start()
       end
     end
   end
+  computer.pushSignal("init")
   return K.loop()
 end
 

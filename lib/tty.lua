@@ -62,6 +62,9 @@ function tty.isAvailable() return true end
 function tty.getCursor() return term.getCursor() end
 function tty.setCursor(x, y) term.setCursor(x, y) end
 function tty.bind() return true end
+-- simplified: always returns "keyboard0" since Freax doesn't expose raw
+-- component.invoke for screen:getKeyboards(). Full OpenOS logic scans
+-- screens for attached keyboards (see OpenOS tty:keyboard lines 198-228).
 function tty.keyboard() return "keyboard0" end
 
 tty.stream = {}
