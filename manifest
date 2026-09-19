@@ -116,6 +116,7 @@ lib/text.lua
 lib/thread.lua
 lib/transforms.lua
 lib/tty.lua
+lib/unicode.lua
 lib/uuid.lua
 # -- (root)
 manifest

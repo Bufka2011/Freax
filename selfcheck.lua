@@ -8,11 +8,17 @@ local function check(n, c)
   end
 end
 
+-- memory accounting: freeMemory delta per require tells us which lib is
+-- worth optimizing (selfcheck is dev-only; harmless if freax.freeMem absent)
+local fm = freax and freax.freeMem
+if fm then io.write("free before requires: " .. tostring(fm()) .. " bytes\n") end
 for _, m in ipairs({"text","transforms","colors","note","pipe",
   "process","package","io","os","buffer","internet","eeprom","rs","thread",
   "serialization","uuid","sides","event","keyboard","tty","filesystem",
   "fs","shell","term","computer"}) do
+  local before = fm and fm() or 0
   local ok, mod = pcall(require, m)
+  if fm then io.write(string.format("  %-12s %+d bytes\n", m, fm() - before)) end
   -- include the loader error: "FAIL require X" alone cannot separate
   -- missing-file from load-error (e.g. vt100/note/uuid rounds).
   check("require " .. m .. ((ok and mod) and "" or (": " .. tostring(mod))), ok and mod)
