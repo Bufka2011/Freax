@@ -28,6 +28,21 @@ function term.setCursor(x, y) freax.ttySetCursor(x, y) end
 function term.getCursor() return freax.ttyGetCursor() end
 function term.getSize() return freax.ttySize() end
 
+-- OpenOS term.gpu(): a GPU-like shim over the shared kernel tty. Colors
+-- actuate the tty; text goes through term.write. Programs such as dmesg
+-- use this for setForeground/getForeground.
+function term.gpu()
+  return {
+    getForeground = function() return freax.ttyGetForeground() end,
+    getBackground = function() return freax.ttyGetBackground() end,
+    setForeground = function(c, isPal) return freax.ttySetForeground(c, isPal) end,
+    setBackground = function(c, isPal) return freax.ttySetBackground(c, isPal) end,
+    getResolution = function() return freax.ttySize() end,
+    getViewport = function() return freax.ttySize() end,
+    set = function(x, y, s) freax.ttySetCursor(x, y) freax.ttyWrite(s) end,
+  }
+end
+
 -- OpenOS compat ------------------------------------------------
 function term.read(history, dobreak, hint, pwchar, filter)
   -- dobreak/hint: accepted; the kernel reader always returns one line

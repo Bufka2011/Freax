@@ -2097,7 +2097,7 @@ local function makeEnv(p)
     function h:seek() return nil, "not supported" end
     return h
   end
-  local stdinH = { _isfile = true, _stdio = true }
+  local stdinH = { _isfile = true, _stdio = true, tty = true }
   function stdinH:read(fmt)
     fmt = fmt or "*l"
     if fmt == "*l" or fmt == "*L" or fmt == nil then return ttyReadLine(p) end
@@ -2106,7 +2106,7 @@ local function makeEnv(p)
   function stdinH:lines() return function() return ttyReadLine(p) end end
   function stdinH:close() return nil, "cannot close stdin" end
   local function newTtyOut()
-    local o = { _isfile = true, _stdio = true }
+    local o = { _isfile = true, _stdio = true, tty = true }
     function o:write(...)
       local parts = {}
       for i = 1, select("#", ...) do parts[#parts + 1] = tostring(select(i, ...)) end
