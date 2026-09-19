@@ -53,11 +53,14 @@ while true do
   else
     local motd = fs.readFile("/etc/motd")
     if motd then
+      local w = freax.ttySize()
+      local _, cy = freax.ttyGetCursor()
       for line in motd:gmatch("[^\n]+") do
-        local _, cy = freax.ttyGetCursor()
-        freax.ttySetCursor(1, cy + 1)
-        freax.ttyWrite(line)
+        freax.gpuFill(1, cy, w, 1, " ")
+        freax.gpuSet(1, cy, line)
+        cy = cy + 1
       end
+      freax.ttySetCursor(1, cy)
     end
     -- session env (throwaway: reset on next login iteration)
     os.setenv("USER", entry.name)
