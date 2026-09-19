@@ -8,6 +8,15 @@ local color, isPal, evt
 if interactive then
   color, isPal = gpu.getForeground()
 end
+-- dump the kernel klog ring first: boot messages (devfs mount, kernel
+-- up, systemd/login spawn) flash on GPU line 1 under K.klog and are
+-- unreadable at boot speed; freax.dmesg() is the only way back to them.
+do
+  local ok, ring = pcall(function() return freax.dmesg() end)
+  if ok and type(ring) == "table" then
+    for _, line in ipairs(ring) do io.write(tostring(line) .. "\n") end
+  end
+end
 io.write("Press 'Ctrl-C' to exit\n")
 pcall(function()
   repeat

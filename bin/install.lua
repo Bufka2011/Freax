@@ -259,6 +259,14 @@ if fails == 0 then
   term.writeln("Copy done, verifying on target...")
 else
   term.writeln("Done with " .. fails .. " skips/fails, verifying anyway...")
+  -- name the holes: "Verification passed" below only covers boot files,
+  -- so a silent skip list here is how a target ends up without uuid etc.
+  local names = {}
+  for dst in pairs(skipped) do names[#names + 1] = dst end
+  table.sort(names)
+  for _, dst in ipairs(names) do
+    term.writeln("  skipped " .. dst .. " (missing on source media)")
+  end
 end
 
 -- Create account database on target (dev media does not carry a live DB)

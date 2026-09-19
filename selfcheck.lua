@@ -13,7 +13,9 @@ for _, m in ipairs({"text","transforms","colors","note","pipe",
   "serialization","uuid","sides","event","keyboard","tty","filesystem",
   "fs","shell","term","computer"}) do
   local ok, mod = pcall(require, m)
-  check("require " .. m, ok and mod)
+  -- include the loader error: "FAIL require X" alone cannot separate
+  -- missing-file from load-error (e.g. vt100/note/uuid rounds).
+  check("require " .. m .. ((ok and mod) and "" or (": " .. tostring(mod))), ok and mod)
 end
 if bit32 then
   check("require bit32", pcall(require, "bit32"))
