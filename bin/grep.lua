@@ -2,120 +2,124 @@ local fs = require("fs")
 local shell = require("shell")
 
 local args, options = shell.parse(...)
-local function usage(msg)
-  local s = msg and io.stderr or io.stdout
+
+local function printUsage(ostream, msg)
+  local s = ostream or io.stdout
   if msg then s:write(msg .. "\n") end
-  s:write("Usage: grep [OPTION]... PATTERN [FILE]...\n  -i ignore case  -v invert  -n line numbers  -c count\n  -r recursive  -q quiet  -w whole word  -x whole line\n  -F fixed string  -l files-with-matches  -L without-match\n  -s suppress errors  -o only-matching  -C color  -a text mode\n  -H with-filename  -h no-filename  -e lua-regexp\n  --max-count=N  --label=L  --file=F  --trim\n")
-  return msg and 2 or 0
+  s:write("Usage: grep [OPTION]... PATTERN [FILE]...\nExample: grep -i 'hello world' menu.lua main.lua\n")
 end
 
-local function pop(...)
-  local r
-  for _, k in ipairs({...}) do r = options[k] or r; options[k] = nil end
-  return r
+local pop = function(...)
+  local result
+  for _, key in ipairs({...}) do
+    result = options[key] or result
+    options[key] = nil
+  end
+  return result
 end
 
 local plain = pop("F", "fixed-strings")
 plain = not pop("e", "--lua-regexp") and plain
-local patFile = pop("file")
-local wholeWord = pop("w", "word-regexp")
-local wholeLine = pop("x", "line-regexp")
-local ignoreCase = pop("i", "ignore-case")
-local stdinLabel = pop("label") or "(standard input)"
+local pattern_file = pop("file")
+local match_whole_word = pop("w", "word-regexp")
+local match_whole_line = pop("x", "line-regexp")
+local ignore_case = pop("i", "ignore-case")
+local stdin_label = pop("label") or "(standard input)"
 local stderr = pop("s", "no-messages") and {write=function()end} or io.stderr
-local invert = not not pop("v", "invert-match")
-local maxCount = tonumber(pop("max-count")) or math.huge
-local lineNum = pop("n", "line-number")
-local recurse = pop("r", "recursive")
-local fOnly = pop("l", "files-with-matches")
-local noOnly = pop("L", "files-without-match") and not fOnly
-local inclFile = pop("H", "with-filename")
-local noFile = pop("h", "no-filename")
-local mOnly = pop("o", "only-matching")
+local invert_match = not not pop("v", "invert-match")
+
+if pop("V", "version", "help") then printUsage(); return 0 end
+
+local max_matches = tonumber(pop("max-count")) or math.huge
+local print_line_num = pop("n", "line-number")
+local search_recursively = pop("r", "recursive")
+
+local colorize = pop("C", "color", "colour")
+local f_only = pop("l", "files-with-matches")
+local no_only = pop("L", "files-without-match") and not f_only
+local include_filename = pop("H", "with-filename")
+include_filename = not pop("h", "no-filename") or include_filename
+local m_only = pop("o", "only-matching")
 local quiet = pop("q", "quiet", "silent")
-local countOnly = pop("c", "count")
+local print_count = pop("c", "count")
 local trim = pop("t", "trim")
-local color = pop("C", "color", "colour")
 local binary = pop("a", "binary", "text")
 
-if pop("help", "V", "version") then return usage() end
-if next(options) then return usage("unexpected option: " .. next(options)) end
+if next(options) then printUsage(stderr, "unexpected option: " .. next(options)); return 2 end
 
-if #args == 0 then io.stderr:write("grep: missing pattern\n"); return 2 end
-local patterns = {table.remove(args, 1)}
-local files = #args > 0 and args or (recurse and {"."} or {"-"})
+local PATTERNS = {args[1]}
+local FILES = {select(2, table.unpack(args))}
 
-if patFile then
-  local f, err = io.open(shell.resolve(patFile), "r")
-  if not f then stderr:write("grep: " .. patFile .. ": " .. tostring(err) .. "\n"); return 2 end
-  for line in f:lines() do if line ~= "" then patterns[#patterns + 1] = line end end
-  f:close()
+if pattern_file then
+  local pf, err = io.open(shell.resolve(pattern_file), "r")
+  if not pf then stderr:write("grep: " .. pattern_file .. ": file not found\n"); return 2 end
+  table.insert(FILES, 1, PATTERNS[1])
+  PATTERNS = {}
+  for line in pf:lines() do PATTERNS[#PATTERNS + 1] = line end
+  pf:close()
 end
+if #PATTERNS == 0 then printUsage(stderr); return 2 end
+if #FILES == 0 then FILES = search_recursively and {"."} or {"-"} end
+if not options.h and search_recursively then include_filename = true end
+if #FILES < 2 then include_filename = false end
 
-if recurse and not noFile then inclFile = true end
-if #files < 2 and not noFile then inclFile = false end
-
-if ignoreCase then
-  for i, p in ipairs(patterns) do
-    patterns[i] = p:gsub("(%%?)(.)", function(pct, ch)
-      if pct ~= "" or not ch:match("%a") then return pct .. ch end
-      return "[" .. ch:lower() .. ch:upper() .. "]"
+if ignore_case then
+  for i = 1, #PATTERNS do
+    PATTERNS[i] = PATTERNS[i]:gsub("(%%?)(.)", function(pct, letter)
+      if pct ~= "" or not letter:match("%a") then return pct .. letter end
+      return "[" .. letter:lower() .. letter:upper() .. "]"
     end)
   end
 end
 
 if plain then
-  for i, p in ipairs(patterns) do
-    patterns[i] = p:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%1")
+  for i = 1, #PATTERNS do
+    PATTERNS[i] = PATTERNS[i]:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%1")
   end
 end
+
+local noop = function(...) return ... end
+local trim_front = trim and function(s) return s:gsub("^%s+", "") end or noop
+local trim_back = trim and function(s) return s:gsub("%s+$", "") end or noop
 
 local function resolve(file)
   return shell.resolve(file)
 end
 
-local function getAllFiles(dir, list)
+local function getAllFiles(dir, file_list)
   for _, node in ipairs(fs.list(shell.resolve(dir)) or {}) do
     local rel = dir:gsub("/+$", "") .. "/" .. node
-    local abs = shell.resolve(rel)
-    if fs.isDirectory(abs) then getAllFiles(rel, list) else list[#list + 1] = rel end
+    local rp = resolve(rel)
+    if fs.isDirectory(rp) then getAllFiles(rel, file_list) else file_list[#file_list + 1] = rel end
   end
 end
 
-if recurse then
-  local tmp = {}
-  for _, arg in ipairs(files) do
-    if fs.isDirectory(shell.resolve(arg)) then getAllFiles(arg, tmp) else tmp[#tmp + 1] = arg end
+if search_recursively then
+  local files = {}
+  for _, arg in ipairs(FILES) do
+    if fs.isDirectory(shell.resolve(arg)) then getAllFiles(arg, files) else files[#files + 1] = arg end
   end
-  files = tmp
+  FILES = files
 end
-
-local noop = function(...) return ... end
-local trimFront = trim and function(s) return s:gsub("^%s+", "") end or noop
-local trimBack = trim and function(s) return s:gsub("%s+$", "") end or noop
 
 local function readLines()
   local curHand, curFile, meta
   return function()
     if not curFile then
-      local file = table.remove(files, 1)
+      local file = table.remove(FILES, 1)
       if not file then return end
       meta = {line_num = 0, hits = 0}
       if file == "-" then
-        curFile = file; meta.label = stdinLabel; curHand = io.input()
+        curFile = file; meta.label = stdin_label; curHand = io.input()
       else
         meta.label = file
         local rp = resolve(file)
         if fs.exists(rp) then
           curHand, _ = io.open(rp, "r")
-          if not curHand then
-            stderr:write("grep: " .. meta.label .. ": failed to read\n")
-            return false, 2
-          end
+          if not curHand then stderr:write("grep: " .. meta.label .. ": failed to read\n"); return false, 2 end
           curFile = meta.label
         else
-          stderr:write("grep: " .. meta.label .. ": file not found\n")
-          return false, 2
+          stderr:write("grep: " .. meta.label .. ": file not found\n"); return false, 2
         end
       end
     end
@@ -134,55 +138,59 @@ local function readLines()
   end
 end
 
-local ec, anyHit = nil, 1
-local lastYield = computer.uptime()
+local function write_color(part, ansi)
+  if ansi then io.write("\27[" .. ansi .. "m" .. part .. "\27[0m") else io.write(part) end
+end
+
+local flush = (f_only or no_only or print_count) and function(m)
+  if no_only and m.hits == 0 or f_only and m.hits ~= 0 then io.write(m.label .. "\n")
+  elseif print_count then io.write((include_filename and (m.label .. ":") or "") .. m.hits .. "\n") end
+end
+
+local ec, any_hit_ec = nil, 1
+local last_yield = computer.uptime()
 
 local function test(m, p)
-  local empty = true
-  local idx, slen = 1, #m.line
-  local needFile, needLine = inclFile, lineNum
-  local hitVal = 1
-  while idx <= slen and not m.close do
-    local i, j = m.line:find(p, idx, plain)
-    local wf = wholeWord and not (i and not (m.line:sub(i - 1, i - 1) .. m.line:sub(j + 1, j + 1)):find("[%a_]"))
-    local lf = wholeLine and not (i == 1 and j == slen)
-    local matched = not ((mOnly or idx == 1) and not i)
-    if (hitVal == 1 and wf) or lf then matched, i, j = false end
-    if invert == matched then break end
-    if maxCount == 0 then return end
-    anyHit = 0; m.hits = m.hits + hitVal; hitVal = 0
-    if fOnly or noOnly then m.close = true end
-    if (fOnly or noOnly or countOnly) and not quiet and not m.close then
-      if noOnly and m.hits == 0 or fOnly and m.hits ~= 0 then io.write(m.label .. "\n")
-      elseif countOnly then io.write((inclFile and (m.label .. ":") or "") .. m.hits .. "\n") end
-    end
-    if quiet then return end
-    if needFile then io.write(m.label .. ":"); needFile = nil end
-    if needLine then io.write(m.line_num .. ":"); needLine = nil end
-    local s = mOnly and "" or (m.line:sub(idx, (i or 0) - 1))
+  local empty_line = true
+  local last_index, slen = 1, #m.line
+  local needs_filename, needs_line_num = include_filename, print_line_num
+  local hit_value = 1
+  while last_index <= slen and not m.close do
+    local i, j = m.line:find(p, last_index, plain)
+    local word_fail = match_whole_word and not (i and not (m.line:sub(i - 1, i - 1) .. m.line:sub(j + 1, j + 1)):find("[%a_]"))
+    local line_fail = match_whole_line and not (i == 1 and j == slen)
+    local matched = not ((m_only or last_index == 1) and not i)
+    if (hit_value == 1 and word_fail) or line_fail then matched, i, j = false end
+    if invert_match == matched then break end
+    if max_matches == 0 then return end
+    any_hit_ec = 0
+    m.hits, hit_value = m.hits + hit_value, 0
+    if f_only or no_only then m.close = true end
+    if flush or quiet then return end
+    if needs_filename then io.write(m.label .. ":"); needs_filename = nil end
+    if needs_line_num then io.write(m.line_num .. ":"); needs_line_num = nil end
+    local s = m_only and "" or m.line:sub(last_index, (i or 0) - 1)
     local g = i and m.line:sub(i, j) or ""
-    if i == 1 then g = trimFront(g) elseif idx == 1 then s = trimFront(s) end
-    if j == slen then g = trimBack(g) elseif not i then s = trimBack(s) end
+    if i == 1 then g = trim_front(g) elseif last_index == 1 then s = trim_front(s) end
+    if j == slen then g = trim_back(g) elseif not i then s = trim_back(s) end
     io.write(s)
-    if color and i then io.write("\27[31m" .. g .. "\27[0m") else io.write(g) end
-    empty = false
-    idx = (j or slen) + 1
-    if mOnly or idx > slen then io.write("\n"); empty = true; needFile, needLine = inclFile, lineNum end
+    if colorize and i then write_color(g, "31") else io.write(g) end
+    empty_line = false
+    last_index = (j or slen) + 1
+    if m_only or last_index > slen then io.write("\n"); empty_line = true; needs_filename, needs_line_num = include_filename, print_line_num end
   end
-  if not empty then io.write("\n") end
-  if maxCount ~= math.huge and m.hits >= maxCount then m.close = true end
+  if not empty_line then io.write("\n") end
+  if max_matches ~= math.huge and m.hits >= max_matches then m.close = true end
 end
 
 for meta, status in readLines() do
-  if computer.uptime() - lastYield > 1 then os.sleep(0); lastYield = computer.uptime() end
+  if computer.uptime() - last_yield > 1 then os.sleep(0); last_yield = computer.uptime() end
   if not meta then
     if type(status) == "table" then
-      if noOnly and status.hits == 0 or fOnly and status.hits ~= 0 then io.write(status.label .. "\n") end
-      if countOnly and not (fOnly or noOnly) then io.write((inclFile and (status.label .. ":") or "") .. status.hits .. "\n") end
+      if flush then flush(status) end
     elseif status then ec = status or ec end
   else
-    for _, p in ipairs(patterns) do test(meta, p) end
+    for _, p in ipairs(PATTERNS) do test(meta, p) end
   end
 end
-
-return ec or anyHit
+return ec or any_hit_ec
