@@ -2157,6 +2157,35 @@ end
 -- Boot
 ---------------------------------------------------------------
 
+-- Mount the pure-Lua devfs at /dev. The kernel host environment has no
+-- global require (OC strips it), so borrow a throwaway process env just to
+-- load the module; the mount keeps the returned proxy (and its libs) alive.
+-- Non-fatal: a failed mount is logged and boot continues.
+local function mountDevfs()
+  local ok, err = pcall(function()
+    local env = makeEnv({ pid = 0, name = "kernel", queue = {}, vars = {} })
+    local devfs = env.require("devfs")
+    if type(devfs) ~= "table" or type(devfs.api) ~= "table"
+      or type(devfs.api.proxy) ~= "table" then
+      error("missing api.proxy")
+    end
+    -- create /dev on the underlying root if it isn't there yet
+    pcall(function()
+      local proxy, rest = vfsResolve("/dev")
+      if proxy and rest ~= "" and proxy.exists and not proxy.exists(rest)
+        and proxy.makeDirectory then
+        proxy.makeDirectory(rest)
+      end
+    end)
+    vfsMount(devfs.api.proxy, "/dev", nil)
+  end)
+  if ok then
+    K.klog("devfs mounted at /dev")
+  else
+    K.klog("devfs mount skipped: " .. tostring(err))
+  end
+end
+
 function K.init(a, b)
   if type(a) == "table" and (a.bootfs or a.readFile or a.loadModule) then
     bootfs = a.bootfs
@@ -2222,6 +2251,7 @@ function K.init(a, b)
       if not tryRun("/.autorun") then tryRun("/.autorun.lua") end
     end
   end
+  mountDevfs()
   -- Single-source version: /VERSION (apt-kept), fallback for old media.
   -- File is bytes-long; whole-read is safe (unlike the 66K kernel).
   local kver = "0.6"

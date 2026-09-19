@@ -12,6 +12,10 @@ local tx = require("transforms")
 local sh = {}
 sh.internal = {}
 
+-- Builtins are registered by the shell front-end (bin/sh.lua). They run
+-- in-process with io redirection instead of being spawned.
+sh.internal.builtins = {}
+
 -- tx.sub / tx.partition live in OpenOS lib/core/full_transforms.lua, which
 -- Freax does not ship. Inline the pieces sh needs.
 local adjust = tx.internal.range_adjust
@@ -236,6 +240,52 @@ local function waitAll(pids)
   return code
 end
 
+-- Run a registered builtin in-process. Redirects are applied to the
+-- process io table (io.input/output/error) and restored afterwards.
+-- Returns command_passed(...) plus an optional reason, like executePipes.
+function sh.internal.runBuiltin(name, args, redirects)
+  local builtin = sh.internal.builtins[name]
+  if not builtin then return false, name .. ": not a builtin" end
+
+  local oldIn, oldOut, oldErr = io.input(), io.output(), io.error()
+  local owned = {}
+
+  local function restore()
+    io.input(oldIn)
+    io.output(oldOut)
+    io.error(oldErr)
+    closeOwned(owned)
+  end
+
+  for _, rjob in ipairs(redirects or {}) do
+    local from_io, to_io, mode = table.unpack(rjob)
+    if type(to_io) == "number" then
+      local target
+      if to_io == 0 then target = io.input()
+      elseif to_io == 1 then target = io.output()
+      elseif to_io == 2 then target = io.error()
+      end
+      if from_io == 0 then io.input(target)
+      elseif from_io == 1 then io.output(target)
+      elseif from_io == 2 then io.error(target) end
+    else
+      local file, reason = io.open(shell.resolve(to_io), mode)
+      if not file then
+        restore()
+        return false, "could not open '" .. to_io .. "': " .. tostring(reason)
+      end
+      owned[#owned + 1] = file
+      if from_io == 0 then io.input(file)
+      elseif from_io == 1 then io.output(file)
+      elseif from_io == 2 then io.error(file) end
+    end
+  end
+
+  local result = builtin(table.unpack(args))
+  restore()
+  return sh.internal.command_passed(result)
+end
+
 function sh.internal.executePipes(pipe_parts, eargs, env)
   local stages = {}
   for _, words in ipairs(pipe_parts) do
@@ -266,6 +316,17 @@ function sh.internal.executePipes(pipe_parts, eargs, env)
       closeOwned(owned)
       waitAll(pids)
       return false, "syntax error: empty command"
+    end
+
+    if sh.internal.builtins[name] then
+      if #stages > 1 then
+        closeOwned(owned)
+        waitAll(pids)
+        return false, name .. ": builtin in pipeline unsupported"
+      end
+      closeOwned(owned)
+      waitAll(pids)
+      return sh.internal.runBuiltin(name, st.args, st.redirects)
     end
 
     local path = shell.resolveCmd(name)

@@ -58,6 +58,15 @@ function lib.begins(tbl,v,f,l)
   return true
 end
 
+function lib.foreach(tbl,func)
+  checkArg(1,tbl,'table')
+  checkArg(2,func,'function')
+  for k,v in pairs(tbl)do
+    local r=func(v,k)
+    if r then return r end
+  end
+end
+
 function lib.concat(...)
   local r,rn,k={},0
   for _,tbl in ipairs({...})do

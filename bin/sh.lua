@@ -1,10 +1,12 @@
 -- sh: Freax shell (M2).
--- Quotes-aware tokenizer; pipelines | ; redirects > >> < 2> 2>&1;
--- chaining ; && || ; aliases; source. Builtins use io (redirectable).
+-- Parsing and execution are delegated to lib/sh.lua (tokenize, aliases,
+-- pipes, redirects, &&/||, glob, $expansion); this file provides the
+-- interactive REPL, the builtin table, and registers it with lib/sh.
 
 local term = require("term")
 local shell = require("shell")
 local fs = require("fs")
+local sh = require("sh")
 
 local builtins = {}
 
@@ -126,261 +128,25 @@ end
 builtins.exit = function() freax.exit() end
 builtins.logout = function() freax.exit() end
 
--- Tokenizer: quotes, backslash escapes, operators incl. 2> 2>> 0< && || ;.
-local function tokenize(line)
-  local toks, cur, q = {}, "", nil
-  local function flushOp(op)
-    if cur ~= "" and cur:match("^%d+$") then
-      toks[#toks + 1] = cur .. op
-      cur = ""
-    else
-      if cur ~= "" then toks[#toks + 1] = cur cur = "" end
-      toks[#toks + 1] = op
-    end
-  end
-  local i = 1
-  while i <= #line do
-    local c = line:sub(i, i)
-    local two = line:sub(i, i + 1)
-    if q then
-      if c == q then q = nil
-      elseif c == "\\" and i < #line then i = i + 1 cur = cur .. line:sub(i, i)
-      else cur = cur .. c end
-    elseif c == '"' or c == "'" then q = c
-    elseif c:match("%s") then
-      if cur ~= "" then toks[#toks + 1] = cur cur = "" end
-    elseif two == "&&" or two == "||" or two == ">>" or two == "2>" or two == "&>" then
-      if two == "2>" and line:sub(i + 2, i + 2) == ">" then
-        flushOp("2>>")
-        i = i + 1
-      elseif two == ">>" then
-        flushOp(">>")
-        i = i + 1
-      else
-        -- && || or fd-less 2> : flush pending word, emit operator
-        if cur ~= "" then toks[#toks + 1] = cur cur = "" end
-        toks[#toks + 1] = two
-        i = i + 1
-      end
-    elseif c == "|" or c == "<" or c == ">" or c == ";" then
-      flushOp(c)
-    elseif c == "&" then
-      -- lone &: background operator (&& handled above); quoted & stays data
-      if cur ~= "" then toks[#toks + 1] = cur cur = "" end
-      toks[#toks + 1] = c
-    else cur = cur .. c end
-    i = i + 1
-  end
-  if cur ~= "" then toks[#toks + 1] = cur end
-  return toks
-end
-
--- Split token list into commands chained by ; && ||.
-local function splitCommands(toks)
-  local cmds = { { stages = { { args = {} } }, op = nil } }
-  local cur = cmds[1].stages[1]
-  local i = 1
-  while i <= #toks do
-    local t = toks[i]
-    if t == ";" or t == "&&" or t == "||" or t == "&" then
-      cmds[#cmds].after = (t == "&") and ";" or t
-      if t == "&" then cmds[#cmds].bg = true end
-      cmds[#cmds + 1] = { stages = { { args = {} } } }
-      cur = cmds[#cmds].stages[1]
-    elseif t == "|" then
-      cur = { args = {} }
-      cmds[#cmds].stages[#cmds[#cmds].stages + 1] = cur
-    elseif t == "<" or t == "0<" then
-      i = i + 1
-      if not toks[i] then return nil, "missing file after " .. t end
-      cur.stdin = toks[i]
-    elseif t == ">" or t == "1>" or t == ">>" or t == "1>>" or t == "&>" then
-      i = i + 1
-      if not toks[i] then return nil, "missing file after " .. t end
-      cur.stdout = toks[i]
-      cur.append = (t == ">>" or t == "1>>")
-      if t == "&>" then cur.errMerge = "1" end -- &>file = >file 2>&1
-    elseif t == "2>" or t == "2>>" then
-      i = i + 1
-      if not toks[i] then return nil, "missing file after " .. t end
-      local target = toks[i]
-      if target == "&" and toks[i + 1] then
-        i = i + 1
-        target = "&" .. toks[i] -- split form of 2>&N
-      end
-      if target:sub(1, 1) == "&" then -- 2>&N form (tokenizer splits it)
-        cur.errMerge = target:sub(2)
-      else
-        cur.stderr = target
-        cur.errAppend = (t == "2>>")
-      end
-    elseif t:match("^2>&%d$") then
-      cur.errMerge = t:sub(4)
-    else
-      cur.args[#cur.args + 1] = t
-    end
-    i = i + 1
-  end
-  return cmds
-end
-
-local function runBuiltin(b, args, st)
-  local oldIn, oldOut, oldErr = io.input(), io.output(), io.error()
-  local opened = {}
-  local function fail(msg)
-    io.input(oldIn) io.output(oldOut) io.error(oldErr)
-    for _, h in ipairs(opened) do h:close() end
-    io.write(msg .. "\n")
-    return 1
-  end
-  if st.stdin then
-    local f, err = io.open(shell.resolve(st.stdin), "r")
-    if not f then return fail("cannot read " .. st.stdin .. ": " .. tostring(err)) end
-    opened[#opened + 1] = f
-    io.input(f)
-  end
-  if st.stdout then
-    local f, err = io.open(shell.resolve(st.stdout), st.append and "a" or "w")
-    if not f then return fail("cannot write " .. st.stdout .. ": " .. tostring(err)) end
-    opened[#opened + 1] = f
-    io.output(f)
-  end
-  if st.stderr then
-    local f, err = io.open(shell.resolve(st.stderr), st.errAppend and "a" or "w")
-    if not f then return fail("cannot write " .. st.stderr .. ": " .. tostring(err)) end
-    opened[#opened + 1] = f
-    io.error(f)
-  elseif st.errMerge == "1" then
-    io.error(io.output())
-  end
-  local r = b(table.unpack(args))
-  io.input(oldIn) io.output(oldOut) io.error(oldErr)
-  for _, h in ipairs(opened) do h:close() end
-  return r or 0
-end
-
-local function runExternal(stages, bg, line)
-  local pids = {}
-  local prevR = nil
-  local owned = {}
-  local function cleanup()
-    for _, h in ipairs(owned) do
-      if type(h) == "number" then freax.fsClose(h)
-      else h:close() end
-    end
-    owned = {}
-  end
-  local function reap()
-    local code = 0
-    for i, p2 in ipairs(pids) do
-      local c = freax.wait(p2)
-      if i == #pids then code = c or 0 end
-    end
-    return code
-  end
-  for idx, st in ipairs(stages) do
-    local cmd = st.args[1]
-    if not cmd then
-      cleanup()
-      for _, p2 in ipairs(pids) do freax.wait(p2) end
-      return 0
-    end
-    if builtins[cmd] then
-      io.write(cmd .. ": builtin in pipeline unsupported\n")
-      cleanup()
-      for _, p2 in ipairs(pids) do freax.wait(p2) end
-      return 1
-    end
-    local inFd, outFd, errFd = nil, nil, nil
-    if st.stdin then
-      local h, err = io.open(shell.resolve(st.stdin), "r")
-      if not h then io.write("cannot read " .. st.stdin .. "\n") cleanup() return 1 end
-      owned[#owned + 1] = h
-      inFd = h._fd
-    elseif prevR then
-      inFd = prevR
-    end
-    local nextR = nil
-    if idx < #stages then
-      local rfd, wfd = freax.pipe()
-      owned[#owned + 1] = rfd
-      owned[#owned + 1] = wfd
-      outFd = wfd
-      nextR = rfd
-    elseif st.stdout then
-      local h, err = io.open(shell.resolve(st.stdout), st.append and "a" or "w")
-      if not h then io.write("cannot write " .. st.stdout .. "\n") cleanup() return 1 end
-      owned[#owned + 1] = h
-      outFd = h._fd
-    end
-    if st.stderr then
-      local h, err = io.open(shell.resolve(st.stderr), st.errAppend and "a" or "w")
-      if not h then io.write("cannot write " .. st.stderr .. "\n") cleanup() return 1 end
-      owned[#owned + 1] = h
-      errFd = h._fd
-    elseif st.errMerge == "1" then
-      errFd = outFd -- 2>&1: same destination (or tty default when nil)
-    end
-    local prog = shell.resolveCmd(cmd)
-    local args = {}
-    for i = 2, #st.args do args[#args + 1] = st.args[i] end
-    local pid, err = freax.spawnIO(cmd, prog, args, inFd, outFd, errFd)
-    if not pid then
-      io.write(tostring(err) .. "\n")
-      cleanup()
-      for _, p2 in ipairs(pids) do freax.wait(p2) end
-      return 127
-    end
-    pids[#pids + 1] = pid
-    prevR = nextR
-  end
-  cleanup() -- children hold dups; closing ours signals EOF downstream
-  if bg then
-    local job = { id = nextJob, pids = pids, line = line or "" }
-    nextJob = nextJob + 1
-    jobs[#jobs + 1] = job
-    io.write(string.format("[%d] %s\n", job.id,
-      table.concat(pids, ",")))
-    return 0
-  end
-  return reap()
+-- Builtins run in-process inside lib/sh.lua's executor; register them here.
+for name, fn in pairs(builtins) do
+  sh.internal.builtins[name] = fn
 end
 
 runDepth = 0
 function runLine(line, depth)
   depth = depth or 0
-  if depth > 10 then io.write("sh: source nesting too deep\n") return 1 end
-  runDepth = depth
-  local toks = tokenize(line)
-  if toks[1] and shell.getAlias(toks[1]) then
-    toks = tokenize(shell.getAlias(toks[1]) .. " " .. line:sub(#toks[1] + 1))
+  if depth > 10 then
+    io.write("sh: source nesting too deep\n")
+    return 1
   end
-  if #toks == 0 then return 0 end
-  local cmds, err = splitCommands(toks)
-  if not cmds then
-    io.write("sh: " .. tostring(err) .. "\n")
+  runDepth = depth
+  local ok, reason = sh.execute(nil, line)
+  if ok == nil then
+    if reason then io.stderr:write("sh: " .. tostring(reason) .. "\n") end
     return 2
   end
-  local code = 0
-  local prevAfter = nil
-  for _, cmd in ipairs(cmds) do
-    local run = true
-    if prevAfter == "&&" and code ~= 0 then run = false end
-    if prevAfter == "||" and code == 0 then run = false end
-    if run then
-      local stages = cmd.stages
-      if #stages == 1 and builtins[stages[1].args[1] or ""] then
-        local st = stages[1]
-        local args = {}
-        for i = 2, #st.args do args[#args + 1] = st.args[i] end
-        code = runBuiltin(builtins[st.args[1]], args, st) or 0
-      else
-        code = runExternal(stages, cmd.bg, line)
-      end
-    end
-    prevAfter = cmd.after
-  end
-  return code
+  return ok and 0 or (sh.getLastExitCode() or 1)
 end
 
 -- Single-source version: /VERSION (apt-kept), fallback for old media.
