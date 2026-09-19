@@ -52,7 +52,13 @@ while true do
     term.writeln("Login incorrect")
   else
     local motd = fs.readFile("/etc/motd")
-    if motd then freax.ttyWrite(motd) end
+    if motd then
+      for line in motd:gmatch("[^\n]+") do
+        local _, cy = freax.ttyGetCursor()
+        freax.ttySetCursor(1, cy + 1)
+        freax.ttyWrite(line)
+      end
+    end
     -- session env (throwaway: reset on next login iteration)
     os.setenv("USER", entry.name)
     os.setenv("LOGNAME", entry.name)
