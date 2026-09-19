@@ -8,7 +8,7 @@ local function check(n, c)
   end
 end
 
-for _, m in ipairs({"text","transforms","colors","vt100","note","pipe",
+for _, m in ipairs({"text","transforms","colors","note","pipe",
   "process","package","io","os","buffer","internet","eeprom","rs","thread",
   "serialization","uuid","sides","event","keyboard","tty","filesystem",
   "fs","shell","term","computer"}) do

@@ -115,7 +115,6 @@ lib/thread.lua
 lib/transforms.lua
 lib/tty.lua
 lib/uuid.lua
-lib/vt100.lua
 # -- (root)
 manifest
 README.md
