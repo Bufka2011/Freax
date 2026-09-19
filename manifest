@@ -88,6 +88,7 @@ etc/systemd/console.unit
 .gitignore
 init.lua
 VERSION
+webinstall.lua
 # -- lib
 lib/apt.lua
 lib/auth.lua
@@ -181,6 +182,7 @@ usr/man/unset
 usr/man/uptime
 usr/man/useradd
 usr/man/userdel
+usr/man/webinstall
 usr/man/wget
 usr/man/which
 usr/man/yes

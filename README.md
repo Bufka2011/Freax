@@ -62,6 +62,17 @@ Copy the repo files to an OC disk/diskette, preserving paths. Boot the computer.
 
 Run `install` to install to a hard drive (needs a second writable HDD).
 
+To install from the internet instead, boot a stock OpenOS diskette with an
+internet card and a formatted hard drive attached:
+
+```
+wget -f https://raw.githubusercontent.com/Bufka2011/Freax/main/webinstall.lua /tmp/webinstall.lua
+lua /tmp/webinstall.lua
+```
+
+`webinstall` streams the whole system onto the drive, sets its label and
+boot address, then offers to reboot. See `man webinstall` (or `--help`).
+
 After that, use packages without leaving the game: `apt update`, then
 `apt install PACKAGE`, `apt upgrade` (needs an internet card). OS
 self-update is separate: `apt sysupdate`, `apt sysupgrade`, then
@@ -78,6 +89,8 @@ self-update is separate: `apt sysupdate`, `apt sysupgrade`, then
 
 - `boot/kernel/main.lua` - the kernel (~2600 lines).
 - `init.lua` - boot entry point.
+- `webinstall.lua` - OpenOS-side bootstrap that installs Freax over the
+  network onto a hard drive.
 - `bin/*.lua` - programs and coreutils.
 - `bin/apt.lua`, `bin/dpkg.lua` - package management front ends.
 - `bin/dpkg-deb.lua` - build and inspect `.fpkg` archives.

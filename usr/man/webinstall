@@ -1,0 +1,76 @@
+NAME
+  webinstall - install Freax over the network from a stock OpenOS diskette
+
+SYNOPSIS
+  webinstall [OPTIONS]...
+
+DESCRIPTION
+  webinstall downloads the Freax operating system from a remote repository
+  and installs it onto a formatted, writable hard drive. It is meant to run
+  on a stock OpenOS diskette, so a Freax install medium is not required: boot
+  OpenOS, attach an internet card and a target drive, fetch this script with
+  wget, and run it with lua.
+
+  webinstall reads the shipped-file list (manifest) from the repository,
+  streams every file to the target in chunks (a file never has to fit in
+  RAM), then generates the account database, labels the target, and sets the
+  machine boot address. Files that are dev-only or machine-local
+  (.gitignore, README.md, selfcheck.lua, /etc/passwd, /etc/shadow,
+  /etc/hostname) are never downloaded.
+
+  This program uses the OpenOS libraries (filesystem, component, internet,
+  shell, term, computer) and does not run on Freax itself.
+
+OPTIONS
+  --source=URL
+    Base URL of the Freax repository. The default is the upstream
+    raw.githubusercontent.com mirror. Files are fetched from
+    URL/<path-without-leading-slash>.
+
+  --to=ADDR
+    Install to the filesystem whose component address starts with ADDR.
+    Without it, webinstall prompts when more than one writable target is
+    attached.
+
+  -y, --yes
+    Do not ask for confirmation before writing to the target.
+
+  --label=NAME
+    Label to apply to the target filesystem. Default: freax.
+
+  --nosetboot
+    Do not set the target as the machine boot device.
+
+  --noreboot
+    Do not offer to reboot after installation.
+
+  -h, --help
+    Show usage and exit.
+
+FILES
+  /manifest
+    Shipped-file list fetched from the repository and written to the target;
+    it also drives install and the legacy apt sysupdate/sysupgrade path.
+
+  /etc/passwd, /etc/shadow
+    Generated on the target with a single root account (optionally with a
+    password, hashed with the target's own lib/sha256.lua).
+
+  /etc/hostname
+    Written as freax on the target.
+
+EXAMPLES
+  Install from upstream, choosing the target interactively:
+    wget -f https://raw.githubusercontent.com/Bufka2011/Freax/main/webinstall.lua /tmp/webinstall.lua
+    lua /tmp/webinstall.lua
+
+  Unattended install to a known drive:
+    lua /tmp/webinstall.lua --to=12ab --yes
+
+  Install from a mirror without touching the boot address:
+    lua /tmp/webinstall.lua --source=http://192.168.1.5/freax --nosetboot
+
+EXIT STATUS
+  0 on success (or user cancellation), 1 on failure such as a missing
+  internet card, no writable target, an incomplete download, or a failed
+  verification.
