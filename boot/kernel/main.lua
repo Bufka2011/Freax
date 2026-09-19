@@ -447,8 +447,18 @@ local function ttyNewline()
     termSt.cy = termSt.cy + 1
   else
     if g then
-      pcall(g.copy, 1, 2, w, h - 1, 0, -1)
-      pcall(g.fill, 1, h, w, 1, " ")
+      local okCopy, copyErr = pcall(g.copy, 1, 2, w, h - 1, 0, -1)
+      if okCopy then
+        pcall(g.fill, 1, h, w, 1, " ")
+      else
+        for y = 2, h do
+          for x = 1, w do
+            local ok, ch = pcall(g.get, x, y)
+            if ok then pcall(g.set, x, y - 1, ch) end
+          end
+        end
+        pcall(g.fill, 1, h, w, 1, " ")
+      end
     end
   end
   ttyShowCursor()
