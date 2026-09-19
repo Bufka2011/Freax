@@ -822,6 +822,210 @@ local function procPull(p)
 end
 
 ---------------------------------------------------------------
+-- Shared module runtime (M4, low-RAM)
+--
+-- OpenOS keeps package/require in the shared host _G (boot/01_process.lua),
+-- so each library compiles once per machine. Freax used to build a fresh
+-- env + fresh libs{} per process: N processes = N copies of every lib,
+-- which is what blew the 384K memory budget. Here modules compile once in
+-- `sharedEnv` and cache in `sharedLibs`. Process-local state is reached
+-- through dispatch proxies (freax/io/os) that resolve to the currently
+-- running process (`currentP`, set by the scheduler). A small set of libs
+-- with genuine per-process state (event handlers, thread workers, tty io)
+-- stay per-process via PER_PROCESS.
+---------------------------------------------------------------
+local currentP = nil
+local sharedLibs = {}
+local sharedLoading = {}
+local sharedEnv = {}
+local PER_PROCESS = { event = true, keyboard = true, thread = true, io = true }
+
+local freaxProxy, ioProxy, osProxy = {}, {}, {}
+local proxiesReady = false
+local function initProxies(rawFreax, rawIO, rawOS)
+  if proxiesReady then return end
+  proxiesReady = true
+  for k, v in pairs(rawFreax) do
+    if type(v) == "function" then
+      freaxProxy[k] = function(...) return currentP.rawFreax[k](...) end
+    end
+  end
+  for k, v in pairs(rawIO) do
+    if type(v) == "function" then
+      ioProxy[k] = function(...) return currentP.rawIO[k](...) end
+    end
+  end
+  for k, v in pairs(rawOS) do
+    if type(v) == "function" then
+      osProxy[k] = function(...) return currentP.rawOS[k](...) end
+    end
+  end
+end
+setmetatable(freaxProxy, { __index = function(_, k)
+  return currentP and currentP.rawFreax[k]
+end })
+setmetatable(ioProxy, { __index = function(_, k)
+  return currentP and currentP.rawIO[k]
+end })
+setmetatable(osProxy, { __index = function(_, k)
+  return currentP and currentP.rawOS[k]
+end })
+
+local function readLibSource(name)
+  local stem = name:gsub("%.", "/")
+  local path = "/lib/" .. stem .. ".lua"
+  local data = vfsReadFile(vfsAbs(path, "/"))
+  if not data and readFile then data = readFile(path) end
+  if not data then
+    local base = path:match("([^/]+)$")
+    if base then
+      data = vfsReadFile("/" .. base)
+      if not data and readFile then data = readFile(base) end
+    end
+  end
+  return data
+end
+
+local function sharedLoad(chunk, name, mode, e)
+  return hostLoad(chunk, name, mode,
+    e or (currentP and currentP.env) or sharedEnv)
+end
+local function sharedLoadfile(path, mode, e)
+  local cwd = (currentP and currentP.cwd) or "/"
+  local data = vfsReadFile(vfsAbs(tostring(path), cwd))
+  if not data and readFile then data = readFile(path) end
+  if not data then return nil, tostring(path) .. ": not found" end
+  return hostLoad(data, "=" .. tostring(path), mode or "t",
+    e or (currentP and currentP.env) or sharedEnv)
+end
+local function sharedDofile(path)
+  local fn, err = sharedLoadfile(path)
+  if not fn then error(err) end
+  return fn()
+end
+
+-- compile-once require for the shared machine env.
+local function sharedRequire(name)
+  if name == "computer" then return sharedEnv.computer end
+  if name == "unicode" then return sharedEnv.unicode end
+  if name == "bit32" then return sharedEnv.bit32 end
+  if name == "os" then return sharedEnv.os end
+  if sharedLibs[name] ~= nil then return sharedLibs[name] end
+  if sharedLoading[name] then error("already loading: " .. name, 2) end
+  local src = readLibSource(name)
+  if not src then error("module not found: " .. name, 2) end
+  local fn, err = hostLoad(src, "=" .. name, "t", sharedEnv)
+  if not fn then error("load error in " .. name .. ": " .. tostring(err)) end
+  sharedLoading[name] = true
+  local ok, res = pcall(fn, name)
+  sharedLoading[name] = false
+  sharedEnv.require = sharedRequire -- package.lua may clobber the global
+  if not ok then error("init error in " .. name .. ": " .. tostring(res)) end
+  sharedLibs[name] = res
+  return res
+end
+
+-- per-process require: only PER_PROCESS libs (and their deps) load in the
+-- requesting process env; everything else is shared machine-wide.
+local function procRequire(name)
+  if not PER_PROCESS[name] then return sharedRequire(name) end
+  local p = currentP
+  if not p or not p.env then return sharedRequire(name) end
+  p.libs = p.libs or {}
+  if p.libs[name] ~= nil then return p.libs[name] end
+  p._loading = p._loading or {}
+  if p._loading[name] then error("already loading: " .. name, 2) end
+  local src = readLibSource(name)
+  if not src then error("module not found: " .. name) end
+  local fn, err = hostLoad(src, "=" .. name, "t", p.env)
+  if not fn then error("load error in " .. name .. ": " .. tostring(err)) end
+  p._loading[name] = true
+  local ok, res = pcall(fn, name)
+  p._loading[name] = false
+  if not ok then error("init error in " .. name .. ": " .. tostring(res)) end
+  p.libs[name] = res
+  return res
+end
+
+local sharedComputer = {
+  uptime = function() return computer.uptime() end,
+  freeMemory = function() return freaxProxy.freeMem() end,
+  totalMemory = function() return freaxProxy.totalMem() end,
+  tmpAddress = function() return freaxProxy.tmpAddr() end,
+  getDeviceInfo = function() return freaxProxy.deviceInfo() end,
+  address = function() return freaxProxy.machineAddr() end,
+  shutdown = function(reboot) pcall(computer.shutdown, reboot and true or false) end,
+  pullSignal = function(sec)
+    local p = currentP
+    if not p then return nil end
+    sec = sec or math.huge
+    local deadline = computer.uptime() + sec
+    local first = table.pack(freaxProxy.pollEvent())
+    if first[1] ~= nil then return table.unpack(first, 1, first.n) end
+    if computer.uptime() >= deadline then return nil end
+    while computer.uptime() < deadline do
+      if freaxProxy.peekEvent() then coroutine.yield()
+      else return procPull(p) end
+    end
+    return nil
+  end,
+  pushSignal = function() return nil, "signal injection denied under Freax" end,
+  beep = function(freq, dur) return freaxProxy.beep(freq, dur) end,
+}
+
+local function sharedCheckArg(n, val, ...)
+  local exp = table.pack(...)
+  for i = 1, exp.n do
+    if type(val) == exp[i] then return end
+  end
+  error(string.format("bad argument #%d (%s expected, got %s)",
+    n, table.concat(exp, " or "), type(val)), 3)
+end
+
+local function sharedPrint(...)
+  local parts = {}
+  for i = 1, select("#", ...) do
+    parts[#parts + 1] = tostring(select(i, ...))
+  end
+  sharedRequire("term").writeln(table.concat(parts, "\t"))
+end
+
+sharedEnv.string = string
+sharedEnv.table = table
+sharedEnv.math = math
+sharedEnv.bit32 = bit32
+sharedEnv.coroutine = coroutine
+sharedEnv.assert = assert
+sharedEnv.error = error
+sharedEnv.ipairs = ipairs
+sharedEnv.next = next
+sharedEnv.pairs = pairs
+sharedEnv.pcall = pcall
+sharedEnv.xpcall = xpcall
+sharedEnv.select = select
+sharedEnv.tostring = tostring
+sharedEnv.tonumber = tonumber
+sharedEnv.type = type
+sharedEnv.unpack = table.unpack
+sharedEnv.setmetatable = setmetatable
+sharedEnv.getmetatable = getmetatable
+sharedEnv.rawget = rawget
+sharedEnv.rawset = rawset
+sharedEnv.rawequal = rawequal
+sharedEnv.rawlen = rawlen
+sharedEnv.unicode = hostUnicode
+sharedEnv.freax = freaxProxy
+sharedEnv.io = ioProxy
+sharedEnv.os = osProxy
+sharedEnv.computer = sharedComputer
+sharedEnv.checkArg = sharedCheckArg
+sharedEnv.load = sharedLoad
+sharedEnv.loadfile = sharedLoadfile
+sharedEnv.dofile = sharedDofile
+sharedEnv.print = sharedPrint
+sharedEnv.require = procRequire
+
+---------------------------------------------------------------
 -- Environments and syscalls
 ---------------------------------------------------------------
 
@@ -1610,7 +1814,7 @@ local function makeEnv(p)
   function freax.ttyGetForeground() return termSt.fg end
   function freax.ttyGetBackground() return termSt.bg end
 
-  env.freax = freax
+  env.freax = freaxProxy
 
   ---- safe globals for OpenOS compat (M2). Pure or kernel-mediated. ----
   env.unicode = hostUnicode
@@ -1642,33 +1846,8 @@ local function makeEnv(p)
     return fn()
   end
 
-  -- computer: info subset + harmless outputs (shutdown/beep).
-  -- No pushSignal (cross-process injection) by design.
-  env.computer = {
-    uptime = function() return computer.uptime() end,
-    freeMemory = function() return freax.freeMem() end,
-    totalMemory = function() return freax.totalMem() end,
-    tmpAddress = function() return freax.tmpAddr() end,
-    getDeviceInfo = function() return freax.deviceInfo() end,
-    address = function() return freax.machineAddr() end,
-    shutdown = function(reboot) pcall(computer.shutdown, reboot and true or false) end,
-    pullSignal = function(sec)
-      sec = sec or math.huge
-      local deadline = computer.uptime() + sec
-      local first = table.pack(freax.pollEvent())
-      if first[1] ~= nil then return table.unpack(first, 1, first.n) end
-      if computer.uptime() >= deadline then return nil end
-      -- wait without eating: peek, yield, re-check (shared keys stay
-      -- queued for whoever actually reads them)
-      while computer.uptime() < deadline do
-        if freax.peekEvent() then coroutine.yield()
-        else return procPull(p) end
-      end
-      return nil
-    end,
-    pushSignal = function() return nil, "signal injection denied under Freax" end,
-    beep = function(freq, dur) return freax.beep(freq, dur) end,
-  }
+  -- computer: shared info subset (dispatches via proxies to currentP).
+  env.computer = sharedComputer
 
   -- os: per-process env vars + clock + VFS-backed remove/rename.
   p.vars = p.vars or {
@@ -1761,7 +1940,7 @@ local function makeEnv(p)
     waitPid(cpid)
     return true
   end
-  env.os = osT
+  env.os = osProxy
 
   -- io: fd-backed files + shared-tty stdio (mirrors OpenOS io surface).
   local function ioFill(h)
@@ -1952,50 +2131,20 @@ local function makeEnv(p)
     end
     return nil
   end
-  env.io = ioT
+  env.io = ioProxy
 
-  -- per-process module loader: /lib only, compiled in THIS env.
-  -- Flat fallback for old media (/term.lua, not /lib/term.lua).
-  local function tryRead(path)
-    local src = vfsReadFile(vfsAbs(path, "/"))
-    if src then return src end
-    src = readFile and readFile(path)
-    if src then return src end
-    local base = path:match("([^/]+)$")
-    if base and base ~= path then
-      src = vfsReadFile("/" .. base)
-      if not src and readFile then src = readFile("/" .. base) or readFile(base) end
-    end
-    return src
-  end
-  local libs = {}
-  function env.require(name)
-    -- mod-provided or safe-subset globals first (OpenOS require falls
-    -- back to globals the same way for computer/unicode).
-    if name == "computer" then return env.computer end
-    if name == "unicode" then return env.unicode end
-    if name == "bit32" then return env.bit32 end
-    if libs[name] then return libs[name] end
-    local stem = name:gsub("%.", "/")
-    local src = tryRead("/lib/" .. stem .. ".lua")
-    if not src then error("module not found: " .. name) end
-    local fn, err = load(src, "=" .. name, "t", env)
-    if not fn then error("load error in " .. name .. ": " .. tostring(err)) end
-    local ok, res = pcall(fn)
-    if not ok then error("init error in " .. name .. ": " .. tostring(res)) end
-    libs[name] = res
-    return res
-  end
+  -- module loading is shared machine-wide (see Shared module runtime).
+  env.require = procRequire
+  env.print = sharedPrint
 
-  env.print = function(...)
-    local parts = {}
-    for i = 1, select("#", ...) do
-      parts[#parts + 1] = tostring(select(i, ...))
-    end
-    local term = env.require("term")
-    term.writeln(table.concat(parts, "\t"))
-  end
-
+  -- publish the raw tables the dispatch proxies resolve against, then
+  -- let the process env inherit the shared machine globals.
+  p.rawFreax = freax
+  p.rawIO = ioT
+  p.rawOS = osT
+  p.env = env
+  initProxies(freax, ioT, osT)
+  setmetatable(env, { __index = sharedEnv })
   return env
 end
 
@@ -2116,6 +2265,7 @@ function K.loop()
         table.remove(procs, i)
       else
         local ok, err
+        currentP = p -- dispatch proxies resolve to the running process
         if not p.started then
           p.started = true
           -- don't drop input arriving on the exact start tick
@@ -2157,14 +2307,18 @@ end
 -- Boot
 ---------------------------------------------------------------
 
--- Mount the pure-Lua devfs at /dev. The kernel host environment has no
--- global require (OC strips it), so borrow a throwaway process env just to
--- load the module; the mount keeps the returned proxy (and its libs) alive.
--- Non-fatal: a failed mount is logged and boot continues.
+-- Mount the pure-Lua devfs at /dev. Loading happens through the shared
+-- module runtime, in a throwaway kernel process context so the dispatch
+-- proxies have a process to resolve against. Non-fatal: a failed mount is
+-- logged and boot continues.
 local function mountDevfs()
   local ok, err = pcall(function()
-    local env = makeEnv({ pid = 0, name = "kernel", queue = {}, vars = {} })
+    local p0 = { pid = 0, name = "kernel", queue = {}, vars = {} }
+    local env = makeEnv(p0)
+    local prevP = currentP
+    currentP = p0
     local devfs = env.require("devfs")
+    currentP = prevP
     if type(devfs) ~= "table" or type(devfs.api) ~= "table"
       or type(devfs.api.proxy) ~= "table" then
       error("missing api.proxy")
