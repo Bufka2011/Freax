@@ -756,6 +756,17 @@ local function makeEnv(p)
   env.rawset       = rawset
   env.rawequal     = rawequal
   env.rawlen       = rawlen
+  env.unicode      = unicode
+
+  -- OpenOS compat: argument type checking used by many libs
+  function env.checkArg(n, val, ...)
+    local types = table.pack(...)
+    for i = 1, types.n do
+      if type(val) == types[i] then return end
+    end
+    local expected = table.concat(types, ", ", 1, types.n)
+    error("bad argument #" .. tostring(n) .. " (" .. expected .. " expected, got " .. type(val) .. ")", 3)
+  end
 
   local freax = {}
 
