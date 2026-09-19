@@ -65,7 +65,21 @@ end
 local path = shell.resolve(args[1])
 local shownName = args[1]
 
-local lines = { "" }
+local parentDir = path:match("^(.+)/[^/]+$")
+if parentDir and freax.fsExists(parentDir) and not freax.fsIsDir(parentDir) then
+  io.stderr:write("Not a directory: " .. parentDir .. "\n"); return 1
+end
+
+local readonly = false
+for _, d in ipairs(freax.fsDevices()) do
+  local mp = d.mount
+  if mp and (path == mp or path:sub(1, #mp + 1) == mp .. "/") then
+    readonly = not not d.readonly; break
+  end
+end
+if freax.fsExists(path) and freax.fsIsDir(path) then
+  io.stderr:write("file is a directory\n"); return 1
+end
 do
   local data = fs.readFile(path)
   if data then
