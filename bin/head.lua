@@ -1,71 +1,140 @@
 local shell = require("shell")
+
 local args, options = shell.parse(...)
+local error_code = 0
 
-local err = 0
-local function pop(k, conv)
-  local r = options[k]; options[k] = nil
-  if r and conv then r = tonumber(r) or (function() err = 1; io.stderr:write("--" .. k .. "=N requires number\n") end)() end
-  return r
+local function pop(key, convert)
+  local result = options[key]
+  options[key] = nil
+  if result and convert then
+    local c = tonumber(result)
+    if not c then
+      io.stderr:write(string.format("head: invalid number of %s: '%s'\n",
+        key, tostring(result)))
+      options.help = true
+      error_code = 1
+    end
+    result = c
+  end
+  return result
 end
 
-local bytes = pop("bytes", true)
-local lines = pop("lines", true)
-local quiet = pop("q") or pop("quiet") or pop("silent")
-local verbose = pop("v") or pop("verbose")
-local help = pop("help")
+local bytes = pop('bytes', true)
+local lines = pop('lines', true)
+local quiet = {pop('q'), pop('quiet'), pop('silent')}
+quiet = quiet[1] or quiet[2] or quiet[3]
+local verbose = {pop('v'), pop('verbose')}
+verbose = verbose[1] or verbose[2]
+local help = pop('help')
+
 if help or next(options) then
-  io.write("Usage: head [--lines=n] [--bytes=n] [-q] [-v] [FILE...]\n")
-  return err
-end
-if #args == 0 then args = {"-"} end
-if quiet and verbose then quiet = false end
-
-local n = math.abs(lines or bytes or 10)
-local isBytes = bytes ~= nil
-local isTail = (lines or 0) < 0 or (bytes or 0) < 0
-
-local function newStream()
-  return { open = true, capacity = n, isBytes = isBytes, tail = isTail and {} }
-end
-
-local function push(s, line)
-  if not line then s.open = false return end
-  if s.tail then
-    s.tail[#s.tail + 1] = line
-    if #s.tail > s.capacity then table.remove(s.tail, 1) end
-    return
+  local invalid_key = next(options)
+  if invalid_key then
+    io.stderr:write(string.format("head: invalid option -- '%s'\n", invalid_key))
+    error_code = 1
   end
-  if s.capacity <= 0 then return end
-  if s.isBytes then
-    io.write(line:sub(1, s.capacity))
-    s.capacity = s.capacity - #line
+  io.write([[Usage: head [OPTION]... [FILE]...
+Print the first 10 lines of each FILE to standard output.
+With no FILE, or when FILE is -, read standard input.
+  -c, --bytes=[-]NUM    print the first NUM bytes
+  -n, --lines=[-]NUM    print the first NUM lines instead of the first 10
+  -q, --quiet, --silent never print headers giving file names
+  -v, --verbose         always print headers giving file names
+      --help            display this help and exit
+]])
+  os.exit(error_code)
+end
+
+if #args == 0 then
+  args = {'-'}
+end
+
+if quiet and verbose then
+  quiet = false
+end
+
+local function new_stream()
+  return
+  {
+    open = true,
+    capacity = math.abs(lines or bytes or 10),
+    bytes = bytes,
+    buffer = (lines and lines < 0 and {}) or (bytes and bytes < 0 and '')
+  }
+end
+
+local function close(stream)
+  if stream.buffer then
+    if type(stream.buffer) == 'table' then
+      stream.buffer = table.concat(stream.buffer)
+    end
+    io.stdout:write(stream.buffer)
+    stream.buffer = nil
+  end
+  stream.open = false
+end
+
+local function push(stream, line)
+  if not line then
+    return close(stream)
+  end
+
+  local cost = stream.bytes and line:len() or 1
+  stream.capacity = stream.capacity - cost
+
+  if not stream.buffer then
+    if stream.bytes and stream.capacity < 0 then
+      line = line:sub(1, stream.capacity - 1)
+    end
+    io.write(line)
+    if stream.capacity <= 0 then
+      return close(stream)
+    end
   else
-    io.write(line .. "\n")
-    s.capacity = s.capacity - 1
+    if type(stream.buffer) == 'table' then -- line storage
+      stream.buffer[#stream.buffer + 1] = line
+      if stream.capacity < 0 then
+        table.remove(stream.buffer, 1)
+        stream.capacity = 0 -- zero out
+      end
+    else -- byte storage
+      stream.buffer = stream.buffer .. line
+      if stream.capacity < 0 then
+        stream.buffer = stream.buffer:sub(-stream.capacity + 1)
+        stream.capacity = 0 -- zero out
+      end
+    end
   end
-  if s.capacity <= 0 then s.open = false end
 end
 
 for i = 1, #args do
-  local f
-  if args[i] == "-" then
-    f = io.stdin
+  local arg = args[i]
+  local is_stdin = arg == '-'
+  local file, reason
+  if is_stdin then
+    file = io.stdin
   else
-    f, err = io.open(args[i], "r")
+    file, reason = io.open(arg, 'r')
+    if not file then
+      io.stderr:write(string.format("head: cannot open '%s' for reading: %s\n",
+        arg, tostring(reason)))
+      error_code = 1
+    end
   end
-  if not f then
-    io.stderr:write("head: " .. args[i] .. ": " .. tostring(err) .. "\n")
-  else
-    if verbose or #args > 1 then io.write("==> " .. args[i] .. " <==\n") end
-    local s = newStream()
-    while s.open do
-      local line = f:read("*l")
-      if not line then break end
-      push(s, line)
+  if file then
+    -- stdin never gets a header; -q suppresses, -v forces, else >1 files
+    if not is_stdin and not quiet and (verbose or #args > 1) then
+      io.write(string.format('==> %s <==\n', arg))
     end
-    if s.tail then
-      for _, tl in ipairs(s.tail) do io.write(tl .. "\n") end
+
+    local stream = new_stream()
+
+    while stream.open do
+      push(stream, file:read('*L'))
     end
-    if args[i] ~= "-" then f:close() end
+
+    if not is_stdin then file:close() end
   end
 end
+
+return error_code

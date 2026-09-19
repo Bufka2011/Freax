@@ -7,13 +7,14 @@ if #args == 0 or options.help then
   return 1
 end
 
-local bRec = options.r or options.R
+local bRec = options.r or options.R or options.recursive
 local bForce = options.f or options.force
 local bVerbose = options.v or options.verbose
 local bEmpty = options.d or options.dir
 local promptLevel = (options.I and 3) or ((options.i or options.interactive) and 1) or 0
 local ec = 0
 
+bVerbose = bVerbose and not bForce
 promptLevel = bForce and 0 or promptLevel
 
 local function confirm(msg)
@@ -24,25 +25,39 @@ end
 
 local function removeRec(path, rel)
   if not fs.exists(path) then
-    if not bForce then io.stderr:write("rm: " .. rel .. ": no such file\n"); ec = 1 end
+    if not bForce then
+      io.stderr:write("rm: cannot remove '" .. rel .. "': No such file or directory\n")
+      ec = 1
+    end
     return false
   end
+
   local isLink = fs.isLink(path)
   local isDir = not isLink and fs.isDirectory(path)
+
   if isDir then
     local list = fs.list(path) or {}
-    if #list > 0 then
-      if not bRec and not (bEmpty and #list == 0) then
-        io.stderr:write("rm: " .. rel .. ": is a directory (use -r)\n"); ec = 1; return false
-      end
-      if bRec then
-        if promptLevel == 1 and not confirm("rm: descend into directory '" .. rel .. "'") then return false end
-        for _, n in ipairs(list) do
-          removeRec(fs.concat(path, n:gsub("/$", "")), rel .. "/" .. n)
+    if bRec then
+      -- -r -i: ask before descending into a non-empty directory
+      if #list > 0 and promptLevel == 1 then
+        if not confirm("rm: descend into directory '" .. rel .. "'") then
+          return false
         end
       end
+      for _, n in ipairs(list) do
+        removeRec(fs.concat(path, n:gsub("/$", "")), rel .. "/" .. n)
+      end
+    elseif not (bEmpty and #list == 0) then
+      if bEmpty then
+        io.stderr:write("rm: cannot remove '" .. rel .. "': Directory not empty\n")
+      else
+        io.stderr:write("rm: cannot remove '" .. rel .. "': Is a directory\n")
+      end
+      ec = 1
+      return false
     end
   end
+
   if promptLevel == 1 then
     local label
     if isLink then
@@ -54,11 +69,12 @@ local function removeRec(path, rel)
     end
     if not confirm("rm: remove " .. label .. " '" .. rel .. "'") then return false end
   end
+
   local ok, err = fs.remove(path)
   if ok then
     if bVerbose then io.write("removed '" .. rel .. "'\n") end
   else
-    io.stderr:write("rm: " .. rel .. ": " .. tostring(err) .. "\n")
+    io.stderr:write("rm: cannot remove '" .. rel .. "': " .. tostring(err) .. "\n")
     ec = 1
   end
   return ok

@@ -122,20 +122,48 @@ local function vfsResolve(absPath)
   return best, bestRest, bestPath, bestAddr
 end
 
-local function vfsMount(proxy, path, addr)
+local function vfsMount(proxy, path, addr, ro)
   path = vfsCanonical(path)
   if path == "" then path = "/" end
   for _, m in ipairs(mounts) do
-    if m.path == path then m.proxy, m.addr = proxy, addr return true end
+    if m.path == path then m.proxy, m.addr, m.ro = proxy, addr, ro return true end
   end
-  mounts[#mounts + 1] = { path = path, proxy = proxy, addr = addr }
+  mounts[#mounts + 1] = { path = path, proxy = proxy, addr = addr, ro = ro }
   return true
+end
+
+-- Emulate a read-only mount by wrapping an OC filesystem proxy. All
+-- access goes through dot-calls, so the wrapper forwards explicitly.
+local function readonlyProxy(proxy)
+  return setmetatable({}, {
+    __index = function(_, key)
+      if key == "isReadOnly" then
+        return function() return true end
+      end
+      if key == "open" then
+        return function(path, mode)
+          mode = tostring(mode or "r")
+          if mode:find("[wa+]") then return nil, "read-only filesystem" end
+          return proxy.open(path, mode)
+        end
+      end
+      if key == "remove" or key == "rename"
+        or key == "makeDirectory" or key == "setLabel" then
+        return function() return nil, "read-only filesystem" end
+      end
+      local v = proxy[key]
+      if type(v) == "function" then
+        return function(...) return v(...) end
+      end
+      return v
+    end,
+  })
 end
 
 local function vfsMounts()
   local out = {}
   for _, m in ipairs(mounts) do
-    out[#out + 1] = { path = m.path, addr = m.addr }
+    out[#out + 1] = { path = m.path, addr = m.addr, ro = m.ro }
   end
   return out
 end
@@ -774,7 +802,7 @@ local function makeEnv(p)
   local function myInh()
     local c = {}
     for k, v in pairs(p.vars or {}) do c[k] = v end
-    return { vars = c, cwd = p.cwd or "/" }
+    return { vars = c, cwd = p.cwd or "/", parent = p.pid }
   end
 
   ---- process control ----
@@ -792,7 +820,8 @@ local function makeEnv(p)
   function freax.ps()
     local out = {}
     for _, q in ipairs(procs) do
-      out[#out + 1] = { pid = q.pid, name = q.name, dead = q.dead or false }
+      out[#out + 1] = { pid = q.pid, name = q.name, dead = q.dead or false,
+        parent = q.parent }
     end
     return out
   end
@@ -1055,7 +1084,7 @@ local function makeEnv(p)
   end
   function freax.fsMounts()
     local out = {}
-    for _, m in ipairs(mounts) do out[#out + 1] = { path = m.path, addr = m.addr } end
+    for _, m in ipairs(mounts) do out[#out + 1] = { path = m.path, addr = m.addr, ro = m.ro } end
     return out
   end
   function freax.fsDevices()
@@ -1082,10 +1111,11 @@ local function makeEnv(p)
     end
     return out
   end
-  function freax.fsMount(addr, path)
+  function freax.fsMount(addr, path, readonly)
     local ok, proxy = pcall(component.proxy, addr)
     if not ok or not proxy then return nil, "no such device" end
-    vfsMount(proxy, vfsAbs(path, "/"), addr)
+    if readonly then proxy = readonlyProxy(proxy) end
+    vfsMount(proxy, vfsAbs(path, "/"), addr, not not readonly)
     return true
   end
   function freax.fsUmount(pathOrAddr)
@@ -1870,6 +1900,7 @@ function K.spawn(name, path, args, stdio, inh)
     -- children inherit cwd + env vars (like a real fork/exec)
     cwd = (inh and inh.cwd) or "/",
     vars = inh and inh.vars,
+    parent = inh and inh.parent,
   }
   -- Optional redirected stdio for pipelines (M2): pipe fds are duped
   -- into the child; {path, mode} specs are opened independently.

@@ -1,63 +1,92 @@
 local process = require("process")
+local unicode = require("unicode")
 
-local data, widths = {}, {}
+local elbow = unicode.char(0x2514)
 
-local function add_field(key, value)
-  if not data[key] then data[key] = {} end
-  table.insert(data[key], value)
-  widths[key] = math.max(widths[key] or 0, #value)
+local cols = {"PID", "PARENT", "EVENTS", "THREADS", "HANDLES", "CMD"}
+
+-- collect a display row per live process
+local rows, byPid = {}, {}
+for _, p in ipairs(freax.ps()) do
+  local pi = process.info(p.pid)
+  local data = (pi and pi.data) or { handles = {} }
+
+  local handlers = rawget(data, "handlers") or {}
+  local events = 0
+  for _ in pairs(handlers) do events = events + 1 end
+
+  local threads = 0
+  for _, h in ipairs(data.handles) do
+    local mt = getmetatable(h)
+    if mt and mt.__status then threads = threads + 1 end
+  end
+
+  local handles = #data.handles
+  local row = {
+    PID = tostring(p.pid),
+    PARENT = p.parent and tostring(p.parent) or "-",
+    EVENTS = events == 0 and "-" or tostring(events),
+    THREADS = threads == 0 and "-" or tostring(threads),
+    HANDLES = handles == 0 and "-" or tostring(handles),
+    CMD = p.name or "?",
+    parent = p.parent,
+  }
+  rows[#rows + 1] = row
+  byPid[p.pid] = row
 end
 
-local cols = {
-  {"PID", function(_, p) return tostring(p.pid) end},
-  {"EVENTS", function(_, p)
-    local handlers = rawget(p.data, "handlers") or {}
-    local count = 0
-    for _ in pairs(handlers) do
-      count = count + 1
-    end
-    return count == 0 and "-" or tostring(count)
-  end},
-  {"THREADS", function(_, p)
-    local count = 0
-    for _, h in ipairs(p.data.handles) do
-      local mt = getmetatable(h)
-      if mt and mt.__status then
-        count = count + 1
-      end
-    end
-    return count == 0 and "-" or tostring(count)
-  end},
-  {"HANDLES", function(_, p)
-    local count = #p.data.handles
-    return count == 0 and "-" or tostring(count)
-  end},
-  {"CMD", function(_, p) return p.command or "?" end},
-}
+-- tree order: roots first, children indented under their parent
+local children, roots = {}, {}
+for _, r in ipairs(rows) do
+  local pid = tonumber(r.PID)
+  if r.parent and byPid[r.parent] then
+    children[r.parent] = children[r.parent] or {}
+    children[r.parent][#children[r.parent] + 1] = pid
+  else
+    roots[#roots + 1] = pid
+  end
+end
+table.sort(roots)
+for _, list in pairs(children) do table.sort(list) end
 
-for _, col in ipairs(cols) do add_field(col[1], col[1]) end
+local function make_elbow(depth)
+  return (" "):rep(depth - 1) .. (depth > 0 and elbow or "")
+end
 
-for _, proc in ipairs(freax.ps()) do
-  local pi = process.info(proc.pid) or {pid = proc.pid, command = proc.name, data = {handles = {}}}
-  for _, col in ipairs(cols) do
-    add_field(col[1], col[2](nil, pi))
+local ordered, visited = {}, {}
+local function walk(pid, depth)
+  if visited[pid] then return end
+  visited[pid] = true
+  local row = byPid[pid]
+  if not row then return end
+  row.CMD = make_elbow(depth) .. row.CMD
+  ordered[#ordered + 1] = row
+  for _, child in ipairs(children[pid] or {}) do
+    walk(child, depth + 1)
+  end
+end
+for _, pid in ipairs(roots) do walk(pid, 0) end
+-- cycles / orphans never reached from a root still need a row
+for _, r in ipairs(rows) do walk(tonumber(r.PID), 0) end
+
+local widths = {}
+for _, c in ipairs(cols) do widths[c] = #c end
+for _, row in ipairs(ordered) do
+  for _, c in ipairs(cols) do
+    widths[c] = math.max(widths[c], #row[c])
   end
 end
 
-local indexed = {}
-for i = 1, #data.PID do indexed[i] = i end
-table.sort(indexed, function(a, b) return tonumber(data.PID[a]) < tonumber(data.PID[b]) end)
+local function pad(value, width)
+  return value .. string.rep(" ", width - #value)
+end
 
 local header = {}
-for _, col in ipairs(cols) do
-  header[#header + 1] = col[1] .. string.rep(" ", widths[col[1]] - #col[1])
-end
+for _, c in ipairs(cols) do header[#header + 1] = pad(c, widths[c]) end
 io.write(table.concat(header, "   ") .. "\n")
 
-for _, idx in ipairs(indexed) do
+for _, row in ipairs(ordered) do
   local parts = {}
-  for _, col in ipairs(cols) do
-    parts[#parts + 1] = data[col[1]][idx] .. string.rep(" ", widths[col[1]] - #data[col[1]][idx])
-  end
+  for _, c in ipairs(cols) do parts[#parts + 1] = pad(row[c], widths[c]) end
   io.write(table.concat(parts, "   ") .. "\n")
 end

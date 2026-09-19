@@ -61,7 +61,7 @@ local function visitor(rpath)
   elseif not fs.isLink(spath) then
     total = fs.size(spath)
   end
-  return total, dirs + (fs.isDirectory(spath) and 1 or 0)
+  return total, dirs
 end
 
 for _, arg in ipairs(args) do

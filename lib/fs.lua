@@ -44,7 +44,7 @@ function fs.link(target, linkpath) return freax.fsLink(target, linkpath) end
 function fs.isLink(p) return freax.fsIsLink(p) end
 function fs.mounts() return freax.fsMounts() end
 function fs.devices() return freax.fsDevices() end
-function fs.mount(addr, path) return freax.fsMount(addr, path) end
+function fs.mount(addr, path, readonly) return freax.fsMount(addr, path, readonly) end
 
 function fs.open(path, mode) return freax.fsOpen(path, mode) end
 function fs.read(fd, n) return freax.fsRead(fd, n) end

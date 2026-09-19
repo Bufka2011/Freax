@@ -27,6 +27,7 @@ function process.info(pid)
     pid = i.pid,
     command = i.name,
     path = "/bin/" .. i.name,
+    parent = i.parent,
     data = data,
   }
 end
