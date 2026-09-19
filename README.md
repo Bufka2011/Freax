@@ -20,23 +20,32 @@ layout.
 
 ## Status
 
-Milestone reached: **M2** (boot -> kernel -> VFS -> shell).
+Milestone reached: **M3** (OpenOS feature parity pass).
 
-- Kernel: scheduler, process table, syscall sandbox, VFS with mounts,
-  pipes (8K buffer), virtual symlinks (RAM table, lost on reboot).
+- Kernel: scheduler, process table, syscall sandbox, VFS with mounts
+  (incl. read-only), pipes (8K buffer), virtual symlinks (RAM table, lost
+  on reboot), parent PID tracking, graceful shutdown/reboot signalling,
+  autorun, ANSI SGR parsing in `ttyWrite`.
 - Shell: bash-ish tokenizer, pipelines, redirects, builtins, PATH
-  resolution, history, aliases, job control, source.
+  resolution, history, aliases, source. Parsing/execution now lives in the
+  reusable `lib/sh.lua` (builtins, `;`/`&&`/`||`/`|`, glob, redirects),
+  consumed by `bin/sh.lua`.
 - Filesystem: OC filesystem proxies via VFS, `/tmp` tmpfs, mounts at
-  `/mnt/<short>` for non-boot devices.
+  `/mnt/<short>` for non-boot devices, `lib/devfs.lua` mounted at `/dev`.
+- Terminal: `lib/tty.lua` ANSI/VT100 stream (SGR colors, cursor
+  moves/erase/save-restore, wrap toggle, scrolling, auto-flush) backed by
+  `freax.*` tty syscalls.
 - Installer: copies all files from source to target HDD with chunked
   4K streaming (no OOM on low-RAM hardware), verification via `fs.size`,
   account DB generation, `/home/` preservation.
 - Coreutils: ls, cat, cp, mv, mkdir, rm, rmdir, touch, head, grep, wc,
-  sort, du, tree, find, less, edit, ln, lua repl, ps, kill, dmesg, df,
-  mount/umount, free, uptime, date, time, yes, which, printenv, hostname,
-  reboot/shutdown, components/lshw/address/primary, flash, label,
-  resolution, redstone, wget, pastebin, man, login, passwd, su, whoami,
-  adduser.
+  sort, du, tree, find, less, edit (touch/clipboard/Unicode/configurable
+  keybinds), ln, lua repl, ps (parent tree), kill, dmesg, df,
+  mount/umount (ro), free, uptime, date, time, yes, which, printenv,
+  hostname, cd, pwd, set/unset, source, rc, reboot/shutdown,
+  components/lshw/address/primary, flash, label, resolution, redstone,
+  wget, pastebin, man, login, passwd, su, whoami, adduser, useradd,
+  userdel.
 
 ## Quick start
 
