@@ -5,7 +5,7 @@ local args, options = shell.parse(...)
 local function usage(msg)
   local s = msg and io.stderr or io.stdout
   if msg then s:write(msg .. "\n") end
-  s:write("Usage: grep [OPTION]... PATTERN [FILE]...\n  -i ignore case  -v invert  -n line numbers  -c count\n  -r recursive  -q quiet  -w whole word  -x whole line\n  -F fixed string  -l files-with-matches  -L without-match\n  -s suppress errors  -o only-matching  -C color\n  --max-count=N  --label=L  --file=F  --trim\n")
+  s:write("Usage: grep [OPTION]... PATTERN [FILE]...\n  -i ignore case  -v invert  -n line numbers  -c count\n  -r recursive  -q quiet  -w whole word  -x whole line\n  -F fixed string  -l files-with-matches  -L without-match\n  -s suppress errors  -o only-matching  -C color  -a text mode\n  -H with-filename  -h no-filename\n  --max-count=N  --label=L  --file=F  --trim\n")
   return msg and 2 or 0
 end
 
@@ -35,6 +35,7 @@ local quiet = pop("q", "quiet", "silent")
 local countOnly = pop("c", "count")
 local trim = pop("t", "trim")
 local color = pop("C", "color", "colour")
+local binary = pop("a", "binary", "text")
 
 if pop("help", "V", "version") then return usage() end
 if next(options) then return usage("unexpected option: " .. next(options)) end
