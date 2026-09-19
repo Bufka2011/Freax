@@ -204,6 +204,8 @@ while true do
   local sym = (user == "root") and "#" or "$"
   term.write(user .. "@" .. hostname() .. ":" .. freax.getCwd() .. sym .. " ")
   -- Ctrl+C cancels the line (ttyReadLine returns nil); an empty line is a
-  -- no-op, so the shell stays alive instead of erroring on a non-string.
-  runLine(term.readLine() or "", 0)
+  -- no-op. pcall guards the REPL: a command error must never kill the
+  -- shell (which would drop the user back to the login prompt).
+  local ok, err = pcall(runLine, term.readLine() or "", 0)
+  if not ok then io.stderr:write("sh: " .. tostring(err) .. "\n") end
 end

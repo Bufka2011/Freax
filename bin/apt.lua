@@ -89,11 +89,20 @@ local function needNet()
   return true
 end
 
+-- GitHub raw serves a cached copy for a few minutes after a push, which
+-- makes `apt update` see the previous VERSION/manifest. A unique query
+-- string changes the URL, so the CDN is bypassed and the new content is
+-- fetched immediately. Harmless for plain file servers too.
+local function noCache(url)
+  local sep = url:find("?", 1, true) and "&" or "?"
+  return url .. sep .. "_=" .. tostring(math.random(1, 2147483647))
+end
+
 -- Small text fetch (VERSION, manifest: KBs, concat is fine).
 -- Returns body string or nil + err.
 local function fetchText(url)
   local internet = require("internet")
-  local ok, handle = pcall(internet.request, url, nil,
+  local ok, handle = pcall(internet.request, noCache(url), nil,
     { ["user-agent"] = "Apt/Freax" })
   if not ok then return nil, tostring(handle) end
   local parts, total = {}, 0
@@ -112,7 +121,7 @@ end
 -- Never holds the whole file in RAM (kernel is ~66K; low-RAM OOMs).
 local function fetchToFile(url, tmp)
   local internet = require("internet")
-  local ok, handle = pcall(internet.request, url, nil,
+  local ok, handle = pcall(internet.request, noCache(url), nil,
     { ["user-agent"] = "Apt/Freax" })
   if not ok then return nil, tostring(handle) end
   local fd, oerr = fs.open(tmp, "w")
