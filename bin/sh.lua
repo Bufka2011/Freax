@@ -203,5 +203,7 @@ while true do
   local user = os.getenv("USER") or "root"
   local sym = (user == "root") and "#" or "$"
   term.write(user .. "@" .. hostname() .. ":" .. freax.getCwd() .. sym .. " ")
-  runLine(term.readLine(), 0)
+  -- Ctrl+C cancels the line (ttyReadLine returns nil); an empty line is a
+  -- no-op, so the shell stays alive instead of erroring on a non-string.
+  runLine(term.readLine() or "", 0)
 end

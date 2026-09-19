@@ -2,6 +2,8 @@ local buffer = require("buffer")
 
 local internet = {}
 
+-------------------------------------------------------------------------------
+
 function internet.request(url, data, headers, method)
   if type(url) ~= "string" then error("bad argument #1 (string expected, got " .. type(url) .. ")") end
   if data ~= nil and type(data) ~= "string" and type(data) ~= "table" then
@@ -28,25 +30,35 @@ function internet.request(url, data, headers, method)
     end
   end
 
-  local request, reason = freax.netRequest(url, post, headers, method)
-  if not request then
+  -- The kernel returns an fd (see freax.netRequest); wrap it in the OpenOS
+  -- stream shape -- callable iterator plus .close/.response -- so ported
+  -- programs (apt, wget, pastebin) keep working.
+  local fd, reason = freax.netRequest(url, post, headers, method)
+  if not fd then
     error(reason, 2)
+  end
+
+  local function close()
+    if fd then local f = fd fd = nil pcall(freax.fsClose, f) end
   end
 
   return setmetatable({
     ["()"] = "function():string -- Tries to read data from the socket stream and return the read byte array.",
+    response = function() return freax.netResponse(fd) end,
     close = setmetatable({}, {
-      __call = request.close,
+      __call = function() close() end,
       __tostring = function() return "function() -- closes the connection" end,
     }),
   }, {
     __call = function()
       while true do
-        local data, reason = request.read()
+        if not fd then return nil end
+        local data, rreason = freax.fsRead(fd)
         if not data then
-          request.close()
-          if reason then
-            error(reason, 2)
+          pcall(freax.netFinish, fd)
+          close()
+          if rreason then
+            error(rreason, 2)
           else
             return nil
           end
@@ -56,16 +68,15 @@ function internet.request(url, data, headers, method)
         os.sleep(0)
       end
     end,
-    __index = request,
   })
 end
 
 local socketStream = {}
 
 function socketStream:close()
-  if self.socket then
-    self.socket.close()
-    self.socket = nil
+  if self._fd then
+    pcall(freax.fsClose, self._fd)
+    self._fd = nil
   end
 end
 
@@ -74,43 +85,34 @@ function socketStream:seek()
 end
 
 function socketStream:read(n)
-  if not self.socket then
+  if not self._fd then
     return nil, "connection is closed"
   end
-  return self.socket.read(n)
+  return freax.fsRead(self._fd, n)
 end
 
 function socketStream:write(value)
-  if not self.socket then
+  if not self._fd then
     return nil, "connection is closed"
   end
-  while #value > 0 do
-    local written, reason = self.socket.write(value)
-    if not written then
-      return nil, reason
-    end
-    value = string.sub(value, written + 1)
-  end
-  return true
+  return freax.fsWrite(self._fd, value)
 end
 
 function internet.socket(address, port)
   if type(address) ~= "string" then error("bad argument #1 (string expected, got " .. type(address) .. ")") end
-  if port ~= nil and type(port) ~= "number" then
-    error("bad argument #2 (number or nil expected, got " .. type(port) .. ")")
-  end
+  if port ~= nil and type(port) ~= "number" then error("bad argument #2 (number or nil expected, got " .. type(port) .. ")") end
   if not freax.netAvail() then
     return nil, "no internet card found"
   end
   if port then
     address = address .. ":" .. port
   end
-  local socket, reason = freax.netSocket(address)
-  if not socket then
+  local fd, reason = freax.netConnect(address)
+  if not fd then
     return nil, reason
   end
-  local stream = {socket = socket}
-  local metatable = {__index = socketStream, __metatable = "socketstream"}
+  local stream = { _fd = fd }
+  local metatable = { __index = socketStream, __metatable = "socketstream" }
   return setmetatable(stream, metatable)
 end
 

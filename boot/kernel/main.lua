@@ -38,6 +38,15 @@ local termSt = { cx = 1, cy = 1, hist = {}, histPos = 0,
   blink = true, curOn = false, savedX = 0, savedY = 0, savedCh = " ", phase = -1,
   fg = 0xFFFFFF, bg = 0x000000, fgPal = false, bgPal = false }
 
+-- Ctrl+C interrupt support. `ctrlDown` tracks the modifier from key signals
+-- (the kernel sees every signal before processes do). `foreground` holds the
+-- pids spawned as commands (freax.spawnIO): Ctrl+C kills that tree, Unix
+-- foreground-process-group style. At the shell prompt the set is empty, so
+-- Ctrl+C just cancels the current input line (see ttyReadLine).
+local ctrlDown = false
+local foreground = {}
+local LC, RC, KEY_C = 0x1D, 0x9D, 0x2E
+
 ---------------------------------------------------------------
 -- VFS (M1, inspired by OpenOS lib/filesystem.lua, simplified)
 -- No symlinks / bind mounts yet. Flat mount table: path -> proxy.
@@ -744,7 +753,13 @@ local function ttyReadLine(p, mask, seed)
     end
     local name, _, char, code = table.unpack(sig, 1, sig.n)
     if name == "key_down" then
-      if code == 28 then                       -- enter
+      if code == KEY_C and ctrlDown then
+        -- Ctrl+C at a prompt: cancel the line, keep the shell alive.
+        -- (Foreground commands are killed by K.interrupt before this.)
+        ttyHideCursor()
+        ttyNewline()
+        return nil
+      elseif code == 28 then                       -- enter
         termSt.cx = sx + bufWidth()
         ttyNewline()
         if not echo then
@@ -2312,6 +2327,9 @@ function K.spawn(name, path, args, stdio, inh)
     p.dead = true
   end)
   procs[#procs + 1] = p
+  -- command spawns (pipes/redirects) are the foreground group for Ctrl+C;
+  -- plain K.spawn (systemd->login->shell) is not.
+  if stdio then foreground[p.pid] = true end
   nextPid = nextPid + 1
   return p.pid
 end
@@ -2319,6 +2337,32 @@ end
 ---------------------------------------------------------------
 -- Scheduler
 ---------------------------------------------------------------
+
+-- Kill the foreground command tree (Ctrl+C). Unix foreground-group style:
+-- only pids spawned via freax.spawnIO count as foreground, so a shell at the
+-- prompt (empty set) is never killed. Returns true if something was killed.
+function K.interrupt()
+  local any = false
+  for _ in pairs(foreground) do any = true break end
+  if not any then return false end
+  local kill = {}
+  local function mark(pid)
+    if kill[pid] then return end
+    kill[pid] = true
+    for _, q in ipairs(procs) do
+      if q.parent == pid then mark(q.pid) end
+    end
+  end
+  for pid in pairs(foreground) do mark(pid) end
+  for _, q in ipairs(procs) do
+    if kill[q.pid] and not q.dead then
+      q.dead = true
+      q.exitCode = 130 -- 128 + SIGINT
+    end
+  end
+  foreground = {}
+  return true
+end
 
 function K.loop()
   while true do
@@ -2330,7 +2374,17 @@ function K.loop()
       sigSeq = sigSeq + 1
       sig.seq = sigSeq
       if isKeySig(sig) then
-        keyQueue[#keyQueue + 1] = sig
+        local kname, _, _, kcode = table.unpack(sig, 1, sig.n)
+        if kname == "key_down" then
+          if kcode == LC or kcode == RC then
+            ctrlDown = true
+          elseif kcode == KEY_C and ctrlDown and K.interrupt() then
+            sig, hasSig = nil, false -- consumed by the interrupt
+          end
+        elseif kname == "key_up" then
+          if kcode == LC or kcode == RC then ctrlDown = false end
+        end
+        if sig then keyQueue[#keyQueue + 1] = sig end
       end
     end
     ttyCursorTick() -- block-cursor blink (GPU touched only on change)
@@ -2338,6 +2392,7 @@ function K.loop()
       local p = procs[i]
       if p.dead then
         closeOwnedFds(p.pid)
+        foreground[p.pid] = nil
         table.remove(procs, i)
       else
         local ok, err
