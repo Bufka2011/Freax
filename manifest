@@ -87,6 +87,7 @@ init.lua
 VERSION
 # -- lib
 lib/auth.lua
+lib/bit32.lua
 lib/buffer.lua
 lib/colors.lua
 lib/component.lua
