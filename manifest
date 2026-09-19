@@ -87,6 +87,7 @@ etc/systemd/console.unit
 # -- (root)
 .gitignore
 init.lua
+mksums.lua
 VERSION
 webinstall.lua
 # -- lib

@@ -76,7 +76,8 @@ boot address, then offers to reboot. See `man webinstall` (or `--help`).
 After that, use packages without leaving the game: `apt update`, then
 `apt install PACKAGE`, `apt upgrade` (needs an internet card). OS
 self-update is separate: `apt sysupdate`, `apt sysupgrade`, then
-`reboot` when asked (versioned by `/VERSION`).
+`reboot` when asked (versioned by `/VERSION`; `sysupgrade` downloads only
+the files whose `SHA256SUMS` checksum changed, then verifies each one).
 
 ## Requirements
 
