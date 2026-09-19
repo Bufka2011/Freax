@@ -2019,6 +2019,35 @@ function K.init(a, b)
       end
     end
   end
+  -- autorun: execute .autorun or .autorun.lua from non-boot mounts
+  for _, m in ipairs(mounts) do
+    if m.path ~= "/" and m.proxy then
+      local function tryRun(fname)
+        local f, err = m.proxy.open(fname, "r")
+        if f then
+          local src = ""
+          while true do
+            local chunk = f:read(4096)
+            if not chunk then break end
+            src = src .. chunk
+          end
+          f:close()
+          if #src > 0 then
+            local fn, loadErr = load(src, "=" .. fname)
+            if fn then
+              local ok, runErr = pcall(fn)
+              if not ok then K.klog("autorun " .. fname .. ": " .. tostring(runErr)) end
+              return true
+            else
+              K.klog("autorun " .. fname .. ": " .. tostring(loadErr))
+            end
+          end
+        end
+        return false
+      end
+      if not tryRun("/.autorun") then tryRun("/.autorun.lua") end
+    end
+  end
   -- Single-source version: /VERSION (apt-kept), fallback for old media.
   -- File is bytes-long; whole-read is safe (unlike the 66K kernel).
   local kver = "0.6"
