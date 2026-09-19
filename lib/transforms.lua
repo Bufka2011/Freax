@@ -83,6 +83,8 @@ function lib.concat(...)
   return r
 end
 
-require("package").delay(lib, "/lib/core/full_transforms.lua")
-
+-- NOTE: OpenOS lazily dofile()s /lib/core/full_transforms.lua here. That
+-- file is not shipped (the methods Freax uses are all defined above), and
+-- the eager require("package") pulled the package loader into every boot.
+-- Unknown methods now return nil instead of erroring on a missing file.
 return lib

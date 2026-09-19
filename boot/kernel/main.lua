@@ -101,8 +101,17 @@ local function vfsAbs(path, cwd)
 end
 
 -- longest-prefix mount match; returns proxy, rest, mountPath, addr
+-- devfs is mounted lazily on first /dev access: loading it at boot costs
+-- ~20K of compiled Lua that most boots never touch. ensureDevfs is set
+-- once mountDevfs is defined below.
+local devfsMounted, devfsLoading, ensureDevfs = false, false, nil
+
 local function vfsResolve(absPath)
   absPath = vfsCanonical(absPath)
+  if not devfsMounted and not devfsLoading and ensureDevfs
+    and (absPath == "/dev" or absPath:sub(1, 5) == "/dev/") then
+    ensureDevfs()
+  end
   local best, bestRest, bestPath, bestAddr
   local bestLen = -1
   for _, m in ipairs(mounts) do
@@ -2353,6 +2362,8 @@ end
 -- proxies have a process to resolve against. Non-fatal: a failed mount is
 -- logged and boot continues.
 local function mountDevfs()
+  if devfsMounted or devfsLoading then return end
+  devfsLoading = true
   local ok, err = pcall(function()
     local p0 = { pid = 0, name = "kernel", queue = {}, vars = {} }
     local env = makeEnv(p0)
@@ -2374,12 +2385,15 @@ local function mountDevfs()
     end)
     vfsMount(devfs.api.proxy, "/dev", nil)
   end)
+  devfsLoading = false
   if ok then
+    devfsMounted = true
     K.klog("devfs mounted at /dev")
   else
     K.klog("devfs mount skipped: " .. tostring(err))
   end
 end
+ensureDevfs = mountDevfs
 
 function K.init(a, b)
   if type(a) == "table" and (a.bootfs or a.readFile or a.loadModule) then
@@ -2446,7 +2460,8 @@ function K.init(a, b)
       if not tryRun("/.autorun") then tryRun("/.autorun.lua") end
     end
   end
-  mountDevfs()
+  -- devfs mounts lazily on first /dev access (see vfsResolve); loading it
+  -- eagerly cost ~20K on every boot even when /dev is never touched.
   -- Single-source version: /VERSION (apt-kept), fallback for old media.
   -- File is bytes-long; whole-read is safe (unlike the 66K kernel).
   local kver = "0.6"

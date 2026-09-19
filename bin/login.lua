@@ -1,7 +1,9 @@
 -- login: console login prompt, getty-style (M2).
 -- Loops forever: prompt -> verify -> shell -> back to prompt on logout.
 -- Killing login just respawns it (started by the kernel), like init/getty.
-local auth = require("auth")
+-- auth (and its sha256 dep) is loaded lazily: demo media has no account
+-- DB, so requiring it at startup costs RAM for nothing.
+local auth
 local fs = require("fs")
 local shell = require("shell")
 local term = require("term")
@@ -30,6 +32,7 @@ while true do
       return
     end
   else
+  if not auth then auth = require("auth") end
   term.write(hostname() .. " login: ")
   local user = term.readLine() or ""
   user = user:match("%S+") or ""
