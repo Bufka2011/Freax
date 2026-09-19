@@ -22,6 +22,7 @@ os.setenv("IFS", " ")
 os.setenv("MANPATH", "/usr/man:.")
 os.setenv("PAGER", "less")
 os.setenv("LS_COLORS", "di=0;36:fi=0:ln=0;33:*.lua=0;32")
+os.setenv("TERM", "xterm-256color")
 
 local home = os.getenv("HOME") or "/home"
 shell.setWorkingDirectory(home)

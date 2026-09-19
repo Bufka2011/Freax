@@ -39,6 +39,7 @@ bin/passwd.lua
 bin/pastebin.lua
 bin/primary.lua
 bin/printenv.lua
+bin/ps.lua
 bin/pwd.lua
 bin/reboot.lua
 bin/redstone.lua

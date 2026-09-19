@@ -4,7 +4,7 @@ local shell = require("shell")
 local args = shell.parse(...)
 
 if #args == 0 then
-  local w, h = freax.ttyGetSize()
+  local w, h = freax.ttySize()
   io.write(w .. " " .. h .. "\n")
   return
 end
