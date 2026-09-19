@@ -98,6 +98,16 @@ local cutting = false          -- reset when cursor changes lines
 local findQuery, findHits, findIdx = nil, {}, 0
 
 local function save()
+  -- backup existing file
+  if fs.exists(path) then
+    local bk = path .. "~"
+    local i = 1
+    while fs.exists(bk) do
+      bk = path .. "." .. i
+      i = i + 1
+    end
+    fs.copy(path, bk)
+  end
   local f, err = io.open(path, "w")
   if not f then
     msg = "save failed: " .. tostring(err)
