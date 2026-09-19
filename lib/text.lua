@@ -1,6 +1,14 @@
 local unicode = require("unicode")
 local tx = require("transforms")
 
+local function checkArg(n, val, ...)
+  local t = type(val)
+  for i = 1, select("#", ...) do
+    if t == select(i, ...) then return end
+  end
+  error(string.format("bad argument #%d (%s expected, got %s)", n, table.concat({...}, "/"), t))
+end
+
 local text = {}
 text.internal = {}
 
@@ -18,6 +26,54 @@ end
 
 function text.removeEscapes(txt)
   return txt:gsub("%%([%(%)%.%%%+%-%*%?%[%^%$])","%1")
+end
+
+-- ported from full_text.lua
+function text.internal.splitWords(words, delimiters)
+  checkArg(1, words, "table")
+  checkArg(2, delimiters, "table")
+  local split_words = {}
+  local next_word
+  local function add_part(part)
+    if next_word then
+      split_words[#split_words+1] = {}
+    end
+    table.insert(split_words[#split_words], part)
+    next_word = false
+  end
+  for wi=1,#words do local word = words[wi]
+    next_word = true
+    for pi=1,#word do local part = word[pi]
+      local qr = part.qr
+      if qr then
+        add_part(part)
+      else
+        local part_text_splits = text.split(part.txt, delimiters)
+        tx.foreach(part_text_splits, function(sub_txt)
+          local delim = #text.split(sub_txt, delimiters, true) == 0
+          next_word = next_word or delim
+          add_part({txt=sub_txt,qr=qr})
+          next_word = delim
+        end)
+      end
+    end
+  end
+  return split_words
+end
+
+-- ported from full_text.lua
+function text.internal.normalize(words, omitQuotes)
+  checkArg(1, words, "table")
+  checkArg(2, omitQuotes, "boolean", "nil")
+  local norms = {}
+  for _,word in ipairs(words) do
+    local norm = {}
+    for _,part in ipairs(word) do
+      norm = tx.concat(norm, not omitQuotes and part.qr and {part.qr[1], part.txt, part.qr[2]} or {part.txt})
+    end
+    norms[#norms+1]=table.concat(norm)
+  end
+  return norms
 end
 
 function text.internal.tokenize(value, options)
@@ -104,7 +160,20 @@ function text.internal.words(input, options)
   return tokens
 end
 
-require("package").delay(text, "/lib/core/full_text.lua")
+-- ported from full_text.lua: public tokenizer API
+function text.tokenize(value, options)
+  checkArg(1, value, "string")
+  checkArg(2, options, "table", "nil")
+  options = options or {}
+  local tokens, reason = text.internal.tokenize(value, options)
+  if type(tokens) ~= "table" then
+    return nil, reason
+  end
+  if options.doNotNormalize then
+    return tokens
+  end
+  return text.internal.normalize(tokens)
+end
 
 -- Inlined from full_text.lua so programs work without deferred load
 function text.split(input, delimiters, dropDelims, di)
