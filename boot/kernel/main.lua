@@ -446,8 +446,10 @@ local function ttyNewline()
   if termSt.cy < h then
     termSt.cy = termSt.cy + 1
   else
-    if g then g.fill(1, 1, w, h, " ") end
-    termSt.cx, termSt.cy = 1, 1
+    if g then
+      pcall(g.copy, 1, 2, w, h - 1, 0, -1)
+      pcall(g.fill, 1, h, w, 1, " ")
+    end
   end
   ttyShowCursor()
 end
