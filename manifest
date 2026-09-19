@@ -90,6 +90,7 @@ lib/auth.lua
 lib/buffer.lua
 lib/colors.lua
 lib/component.lua
+lib/devfs.lua
 lib/eeprom.lua
 lib/event.lua
 lib/filesystem.lua
@@ -104,6 +105,7 @@ lib/pipe.lua
 lib/process.lua
 lib/rs.lua
 lib/serialization.lua
+lib/sh.lua
 lib/sha256.lua
 lib/shell.lua
 lib/sides.lua
