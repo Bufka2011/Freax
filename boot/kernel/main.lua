@@ -646,6 +646,22 @@ local function ttyReadLine(p, mask)
           buf = termSt.hist[termSt.histPos] or ""
           redraw()
         end
+      elseif code == 15 and not echo and p.completer then -- tab
+        local matches = p.completer(buf)
+        if matches and #matches > 0 then
+          local word = buf:match("%S+$") or ""
+          local prefix = buf:sub(1, #buf - #word)
+          if #matches == 1 then
+            buf = prefix .. matches[1] .. " "
+            redraw()
+          else
+            ttyHideCursor()
+            ttyNewline()
+            ttyWrite(table.concat(matches, "  ") .. "\n")
+            ttyShowCursor()
+            redraw()
+          end
+        end
       elseif type(char) == "number" and char > 0 then -- printable
         -- string.char (0-255) throws on Cyrillic/CJK codepoints and some
         -- emulator key events; unicode.char covers full Unicode -> UTF-8.
@@ -1419,6 +1435,7 @@ local function makeEnv(p)
   function freax.ttyGetCursor() return termSt.cx, termSt.cy end
   function freax.ttySize() return ttySize() end
   function freax.ttyReadLine(mask) return ttyReadLine(p, mask) end
+  function freax.ttySetCompleter(fn) p.completer = fn end
 
   env.freax = freax
 
