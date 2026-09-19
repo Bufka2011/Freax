@@ -505,9 +505,15 @@ function ttyHideCursor()
   termSt.curOn = false
   local g = gpu0()
   if g then
-    pcall(g.setForeground, 0xFFFFFF)
-    pcall(g.setBackground, 0x000000)
-    pcall(g.set, termSt.savedX, termSt.savedY, termSt.savedCh)
+    -- Only restore if the cell under the cursor still holds what we saved.
+    -- If text was written there since the cursor was shown, restoring the
+    -- stale saved char would clobber it (first-char corruption bug).
+    local ok, cur = pcall(g.get, termSt.savedX, termSt.savedY)
+    if ok and cur == termSt.savedCh then
+      pcall(g.setForeground, 0xFFFFFF)
+      pcall(g.setBackground, 0x000000)
+      pcall(g.set, termSt.savedX, termSt.savedY, termSt.savedCh)
+    end
   end
 end
 
