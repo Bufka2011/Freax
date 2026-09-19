@@ -90,6 +90,7 @@ lib/auth.lua
 lib/buffer.lua
 lib/colors.lua
 lib/component.lua
+lib/computer.lua
 lib/devfs.lua
 lib/eeprom.lua
 lib/event.lua
