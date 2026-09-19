@@ -54,16 +54,29 @@ local function scan(num)
   return result, line_count
 end
 
+local function showEndMarker()
+  if end_of_buffer then
+    term.setCursorPos(1, height)
+    term.write("(END)")
+  end
+end
+
+local function hideEndMarker()
+  term.setCursorPos(1, height)
+  term.write(string.rep(" ", width))
+end
+
 local function goback(n)
   if not scrollback then return end
   local current_top = bottom - height + 1
   n = math.min(current_top, n)
   if n < 1 then return end
   local top = current_top - n + 1
-  term.clear()
+  hideEndMarker()
+  term.scroll(-n)
   for i = top, top + n - 1 do
-    if i >= top + height then break end
-    print(scrollback[i] or "")
+    term.setCursorPos(1, i - top + 1)
+    term.write(scrollback[i] or string.rep(" ", width))
   end
   bottom = bottom - n
   end_of_buffer = false
@@ -72,7 +85,10 @@ end
 local function goforward(n)
   local update, line_count = scan(n)
   for _, line in ipairs(update) do print(line) end
-  if line_count < n then end_of_buffer = true end
+  if line_count < n then
+    end_of_buffer = true
+    showEndMarker()
+  end
   bottom = bottom + line_count
 end
 

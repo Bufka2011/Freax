@@ -1,10 +1,6 @@
 local process = require("process")
 
-local function thread_id(t)
-  return tostring(t):gsub("^thread: 0x", "")
-end
-
-local data, widths, sorted = {}, {}, {}
+local data, widths = {}, {}
 
 local function add_field(key, value)
   if not data[key] then data[key] = {} end
@@ -14,19 +10,40 @@ end
 
 local cols = {
   {"PID", function(_, p) return tostring(p.pid) end},
+  {"EVENTS", function(_, p)
+    local handlers = rawget(p.data, "handlers") or {}
+    local count = 0
+    for _ in pairs(handlers) do
+      count = count + 1
+    end
+    return count == 0 and "-" or tostring(count)
+  end},
+  {"THREADS", function(_, p)
+    local count = 0
+    for _, h in ipairs(p.data.handles) do
+      local mt = getmetatable(h)
+      if mt and mt.__status then
+        count = count + 1
+      end
+    end
+    return count == 0 and "-" or tostring(count)
+  end},
+  {"HANDLES", function(_, p)
+    local count = #p.data.handles
+    return count == 0 and "-" or tostring(count)
+  end},
   {"CMD", function(_, p) return p.command or "?" end},
 }
 
 for _, col in ipairs(cols) do add_field(col[1], col[1]) end
 
 for _, proc in ipairs(freax.ps()) do
-  local pi = process.info(proc.pid) or {pid = proc.pid, command = proc.name, data = {}}
+  local pi = process.info(proc.pid) or {pid = proc.pid, command = proc.name, data = {handles = {}}}
   for _, col in ipairs(cols) do
     add_field(col[1], col[2](nil, pi))
   end
 end
 
--- sort by PID
 local indexed = {}
 for i = 1, #data.PID do indexed[i] = i end
 table.sort(indexed, function(a, b) return tonumber(data.PID[a]) < tonumber(data.PID[b]) end)

@@ -3,11 +3,10 @@ local args, opts = shell.parse(...)
 
 if #args == 0 then
   for _, m in ipairs(freax.fsMounts()) do
-    local label = ""
+    local label, rw = "", "rw"
     for _, d in ipairs(freax.fsDevices()) do
-      if d.addr == m.addr then label = d.label or "" break end
+      if d.addr == m.addr then label = d.label or ""; rw = d.readonly and "ro" or "rw"; break end
     end
-    local rw = "rw"
     local addr = m.addr and m.addr:sub(1, 8) or "?"
     io.write(string.format("%s on %s (%s) %s\n", addr, m.path, rw, label))
   end

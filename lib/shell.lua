@@ -97,4 +97,16 @@ function shell.aliases()
   end)
 end
 
+local shell_cache = {}
+function shell.getShell()
+  local path = os.getenv("SHELL") or "/bin/sh"
+  local resolved, err = shell.resolve(path, "lua")
+  if not resolved then return nil, err end
+  if shell_cache[resolved] then return shell_cache[resolved] end
+  local ok, fn = pcall(dofile, resolved)
+  if not ok then return nil, fn end
+  shell_cache[resolved] = fn
+  return fn
+end
+
 return shell

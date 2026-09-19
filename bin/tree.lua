@@ -119,11 +119,14 @@ local function digRoot(rootPath)
   until #iterStack == 0
 end
 
+local ec
+
 local function dig(roots)
   return coroutine.wrap(function()
     for _, root in ipairs(roots) do
       local rp = shell.resolve(root)
-      if fs.exists(rp) then digRoot(rp) end
+      if fs.exists(rp) then digRoot(rp)
+      else io.stderr:write("tree: " .. root .. ": No such file or directory\n"); ec = 1 end
     end
   end)
 end
@@ -167,3 +170,4 @@ for entry, levelStack in dig(roots) do
 end
 
 if not opts.C then io.write("\n" .. dirCount .. " director" .. (dirCount == 1 and "y" or "ies") .. ", " .. fileCount .. " file" .. (fileCount == 1 and "" or "s") .. "\n") end
+return ec

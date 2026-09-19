@@ -4,8 +4,12 @@
 -- a fully idle machine will not wake a timed pull early.
 
 local freax = freax
+local computer = require("computer")
 
 local event = {}
+local keyboard = require("keyboard")
+local uptime = computer.uptime
+local lastInterrupt = 0
 local handlers = {}
 event.handlers = handlers
 event._taps = {} -- keyboard state feeds here
@@ -62,6 +66,15 @@ local function dispatch(sig)
     pcall(tap, table.unpack(sig, 1, n))
   end
   local now = freax.uptime()
+  -- Ctrl+C interrupt handling
+  if now - lastInterrupt > 1 and keyboard.isControlDown() and keyboard.isKeyDown(keyboard.keys.c) then
+    lastInterrupt = now
+    if keyboard.isAltDown() then
+      event.push("interrupted", 0)
+    else
+      event.push("interrupted", lastInterrupt)
+    end
+  end
   local copy = {}
   for id, h in pairs(handlers) do copy[id] = h end
   for id, h in pairs(copy) do

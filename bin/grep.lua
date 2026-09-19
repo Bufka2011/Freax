@@ -115,8 +115,8 @@ local function readLines()
         meta.label = file
         local rp = resolve(file)
         if fs.exists(rp) then
-          curHand, _ = io.open(rp, "r")
-          if not curHand then stderr:write("grep: " .. meta.label .. ": failed to read\n"); return false, 2 end
+          curHand, err = io.open(rp, "r")
+          if not curHand then stderr:write("grep: " .. meta.label .. ": " .. (err or "failed to read") .. "\n"); return false, 2 end
           curFile = meta.label
         else
           stderr:write("grep: " .. meta.label .. ": file not found\n"); return false, 2
