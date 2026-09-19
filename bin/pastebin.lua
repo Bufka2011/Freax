@@ -23,6 +23,9 @@ local function get(pasteId, filename)
   if result then
     io.write("success.\n")
     for chunk in response do
+      if not options.k then
+        chunk = string.gsub(chunk, "\r\n", "\n")
+      end
       f:write(chunk)
     end
 

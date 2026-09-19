@@ -7,7 +7,9 @@ if args.n == 0 then
 end
 local computer = require("computer")
 local t0, c0 = computer.uptime(), os.clock()
-shell.execute(table.concat(args, " ", 1, args.n))
+local cmd = table.concat(args, " ", 1, args.n)
+local ok, ec = shell.execute(cmd)
 local dt, dc = computer.uptime() - t0, os.clock() - c0
 io.write(string.format("real %dm%.3fs cpu %dm%.3fs\n",
   math.floor(dt / 60), dt % 60, math.floor(dc / 60), dc % 60))
+return ec or (ok and 0 or 1)
