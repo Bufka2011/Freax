@@ -1368,6 +1368,13 @@ local function makeEnv(p)
   function freax.gpuCopy(x, y, w, h, dx, dy)
     local g = gpu0(); if g then return g.copy(x, y, w, h, dx, dy) end
   end
+  function freax.gpuGet(x, y)
+    local g = gpu0(); if g then return g.get(x, y) end
+  end
+  function freax.gpuMaxResolution()
+    local g = gpu0(); if g then return g.maxResolution() end
+    return 80, 25
+  end
 
   ---- filesystem (M1 VFS, inspired by OpenOS) ----
   function freax.getCwd() return p.cwd or "/" end
@@ -2231,7 +2238,19 @@ local function makeEnv(p)
       return true
     end
     function h:flush() return true end
-    function h:seek() return nil, "not supported" end
+    -- Binary file IO (BMP readers etc.): forward to the OC handle's seek.
+    -- Drop buffered/eof state so the next read starts at the new offset.
+    function h:seek(whence, offset)
+      if self._closed then return nil, "closed" end
+      local e = fds[self._fd]
+      if not e then return nil, "closed" end
+      if not e.proxy.seek then return nil, "seek not supported" end
+      local ok, pos, err = pcall(e.proxy.seek, e.h, whence or "cur", offset or 0)
+      if not ok then return nil, tostring(pos) end
+      if pos == nil then return nil, tostring(err or "seek failed") end
+      self._buf, self._eof = "", false
+      return pos
+    end
     return h
   end
   local stdinH = { _isfile = true, _stdio = true, tty = true }

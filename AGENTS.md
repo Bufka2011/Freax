@@ -59,8 +59,9 @@ demo-mode protection. Never-installed entries live in `SKIP_INSTALL`
   sleeps.
 - The scheduler resumes every process every tick (0.05s), not only on signal
   arrival, so daemons progress on an idle machine.
-- No ambient hardware: `component` is a stub that **errors**; `computer` is
-  an info-only subset. Hardware only through `freax.*` syscalls.
+- No ambient hardware authority: hardware only through `freax.*` syscalls.
+  `component` is an OpenOS-compat bridge over `freax.*` (`lib/component.lua`),
+  and `computer` is an info-only subset.
 - OC filesystem proxies use dot-calls: `fs.open(path)`, never `fs:open()`.
 - Ctrl+C: the kernel tracks the modifier and kills the **foreground tree**
   (pids spawned with a `stdio` table: commands via `spawnIO`/`os.execute`/

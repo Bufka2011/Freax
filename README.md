@@ -10,8 +10,8 @@ layout.
 ## Design
 
 - **Microkernel-ish**: coroutine processes with private `_ENV`, no
-  ambient hardware authority. Processes see `component`? It errors.
-  All hardware through `freax.*` syscalls.
+  ambient hardware authority. All hardware goes through `freax.*` syscalls;
+  `component` is an OpenOS-compat bridge over those (`lib/component.lua`).
 - **Preemption by OC runtime**: the host kills scripts that run too long
   without yielding. That error unwinds through ONE coroutine - the hog
   dies, the kernel lives.
