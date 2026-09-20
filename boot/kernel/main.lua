@@ -717,6 +717,18 @@ local function ttyReadLine(p, mask, seed)
     termSt.histPos = #termSt.hist + 1
   end
   ttyHideCursor()
+  -- Capture the prompt text (everything before the input on this row) so a
+  -- multi-match Tab can reprint prompt+input on a fresh line below the
+  -- suggestions, like OpenOS, instead of drawing over the input.
+  local promptText = ""
+  if g and sx > 1 then
+    for x = 1, sx - 1 do
+      local ok, ch = pcall(g.get, x, sy)
+      if ok and type(ch) == "string" and ch ~= "" then
+        promptText = promptText .. ch
+      end
+    end
+  end
   -- Unicode-aware counts: #buf is bytes, but Cyrillic/CJK chars are
   -- multi-byte UTF-8. Cursor columns need display width (wlen),
   -- password masks need char count (len). Fall back to bytes if the
@@ -913,10 +925,11 @@ local function ttyReadLine(p, mask, seed)
           else
             pos = bufLen()
             redraw()
-            ttyHideCursor()
             ttyNewline()
             ttyWrite(table.concat(matches, "  ") .. "\n")
-            ttyShowCursor()
+            if promptText ~= "" then ttyWrite(promptText) end
+            sx, sy = termSt.cx, termSt.cy
+            prevRows = 0
             redraw()
           end
         end
