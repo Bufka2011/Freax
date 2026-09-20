@@ -19,6 +19,7 @@ local CACHE_DIR = "/tmp/apt"
 local CACHE_MANIFEST = CACHE_DIR .. "/manifest"
 local CACHE_VERSION = CACHE_DIR .. "/VERSION"
 local CACHE_SUMS = CACHE_DIR .. "/SHA256SUMS"
+local CACHE_CHANGED = CACHE_DIR .. "/changed"
 
 -- Manifest entries that are dev-only: shipped for the demo wipe guard
 -- but never installed, so the updater must not create them either.
@@ -169,7 +170,10 @@ local function parseSums(text)
   return out
 end
 
--- Streaming local file hash (never holds a whole file in RAM).
+-- Streaming local file hash (never holds a whole file in RAM). Pure-Lua
+-- SHA-256 is CPU-heavy, so yield between chunks: the OC sandbox kills a
+-- script that runs "too long without yielding", and hashing every file
+-- easily trips that.
 local function sha256File(path)
   local fd, err = fs.open(path, "r")
   if not fd then return nil, err end
@@ -178,6 +182,7 @@ local function sha256File(path)
     local chunk = fs.read(fd, 4096)
     if not chunk or chunk == "" then break end
     h:update(chunk)
+    coroutine.yield()
   end
   fs.close(fd)
   return h:hex()
@@ -252,18 +257,33 @@ function sysupdate.update(opts)
   local files = parseManifest(man)
   local n = #files
   local changed = n
-  if sums then
-    changed = 0
+  local changedList = nil
+  if localVersion() ~= remote and sums then
+    changedList = {}
     for _, dst in ipairs(files) do
       if not (SKIP_DEV[dst] or PRESERVE[dst])
         and not (dst == "/etc/apt/sources.list" and fs.exists(dst)) then
         local want = sums[dst]
-        if want then
-          if sha256File(dst) ~= want then changed = changed + 1 end
-        else
-          changed = changed + 1
+        if not want or sha256File(dst) ~= want then
+          changedList[#changedList + 1] = dst
         end
       end
+      coroutine.yield()
+    end
+    changed = #changedList
+  elseif localVersion() == remote then
+    changed = 0
+  end
+  -- Cache the changed set so `apt sysupgrade` does not re-hash every file.
+  -- Only write it when checksums were valid; otherwise sysupgrade must
+  -- assume everything changed.
+  if changedList then
+    local cfd = fs.open(CACHE_CHANGED, "w")
+    if cfd then
+      if #changedList > 0 then
+        fs.write(cfd, table.concat(changedList, "\n") .. "\n")
+      end
+      fs.close(cfd)
     end
   end
   io.write("Local: " .. localVersion() .. "  Remote: " .. remote .. "\n")
@@ -311,6 +331,21 @@ function sysupdate.upgrade(opts)
     end
   end
   sums = validSums(fetchText(src .. "VERSION"), sums)
+  -- Changed set cached by `apt sysupdate`: avoids re-hashing every file.
+  local changedSet = nil
+  if sums then
+    local ctext = fs.readFile(CACHE_CHANGED)
+    if ctext then
+      changedSet = {}
+      for line in (ctext .. "\n"):gmatch("(.-)\n") do
+        line = trim(line)
+        if line ~= "" then
+          if line:sub(1, 1) ~= "/" then line = "/" .. line end
+          changedSet[line] = true
+        end
+      end
+    end
+  end
   if remote == "unknown" then
     io.stderr:write("apt: cannot determine remote version, aborting.\n")
     return 1
@@ -339,7 +374,15 @@ function sysupdate.upgrade(opts)
       skipN = skipN + 1
     else
       local want = sums and sums[dst]
-      if want and sha256File(dst) == want then
+      local needs
+      if changedSet then
+        needs = changedSet[dst] and true or false
+      elseif want then
+        needs = sha256File(dst) ~= want
+      else
+        needs = true
+      end
+      if not needs then
         skipN = skipN + 1 -- content unchanged: no download
       else
         local rel = dst:sub(2)

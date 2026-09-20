@@ -738,6 +738,32 @@ local function ttyReadLine(p, mask, seed)
   local function shown()
     return echo and echo:rep(bufLen()) or buf
   end
+  -- Character-indexed editing: pos is the cursor as a 1-based char count
+  -- (0 = before the first char), so Unicode edits don't split multibyte
+  -- chars. Left/right/home/end/delete move it; insert/backspace act here.
+  local pos = 0
+  local function usub(s, i, j)
+    -- j == nil means "to end"; #s (byte length) is a safe upper bound for
+    -- the char index so we never depend on unicode.sub's nil/negative j.
+    if j == nil then j = #s end
+    if hostUnicode then
+      local ok, r = pcall(hostUnicode.sub, s, i, j)
+      if ok and type(r) == "string" then return r end
+    end
+    return s:sub(i, j)
+  end
+  local function uwidth(s)
+    if hostUnicode then
+      local ok, n = pcall(hostUnicode.wlen, s)
+      if ok and type(n) == "number" then return n end
+    end
+    return #s
+  end
+  local function cursorWidth()
+    if echo then return pos end
+    if pos <= 0 then return 0 end
+    return uwidth(usub(buf, 1, pos))
+  end
   -- Wrapped line editor display. gpu.set does NOT wrap (ttyWriteRaw
   -- splits runs by hand), so a long input used to clip at the row edge
   -- and look truncated. Render it across as many rows as needed, scroll
@@ -748,9 +774,10 @@ local function ttyReadLine(p, mask, seed)
     local text = shown()
     local total = bufWidth()
     local rows = math.floor((sx - 1 + total) / w)
+    local cw = cursorWidth()
     if not g then
-      termSt.cx = ((sx - 1 + total) % w) + 1
-      termSt.cy = sy + rows
+      termSt.cx = ((sx - 1 + cw) % w) + 1
+      termSt.cy = sy + math.floor((sx - 1 + cw) / w)
       return
     end
     ttyHideCursor()
@@ -778,7 +805,9 @@ local function ttyReadLine(p, mask, seed)
       i = j + 1
       if i <= n then cx, cy = 1, cy + 1 end
     end
-    termSt.cx, termSt.cy = cx, cy
+    -- Cursor goes where `pos` is, not the end of the text.
+    termSt.cx = ((sx - 1 + cw) % w) + 1
+    termSt.cy = sy + math.floor((sx - 1 + cw) / w)
     ttyShowCursor()
   end
   while true do
@@ -790,6 +819,7 @@ local function ttyReadLine(p, mask, seed)
       if nl then
         buf = buf .. pasteQueue:sub(1, nl - 1)
         pasteQueue = pasteQueue:sub(nl + 1)
+        pos = bufLen()
         redraw()
         ttyNewline()
         if not echo then
@@ -800,6 +830,7 @@ local function ttyReadLine(p, mask, seed)
       end
       buf = buf .. pasteQueue
       pasteQueue = ""
+      pos = bufLen()
       redraw()
     end
     local sig = takeMerged(p)
@@ -821,40 +852,53 @@ local function ttyReadLine(p, mask, seed)
       if code == KEY_C and ctrlDown then
         -- Ctrl+C at a prompt: cancel the line, keep the shell alive.
         -- (Foreground commands are killed by K.interrupt before this.)
-        ttyHideCursor()
+        pos = bufLen()
+        redraw()
         ttyNewline()
         return nil
       elseif code == 28 then                       -- enter
+        pos = bufLen()
+        redraw()
         ttyNewline()
         if not echo then
           termSt.hist[#termSt.hist + 1] = buf
           termSt.histPos = #termSt.hist + 1
         end
         return buf
-      elseif code == 14 then                   -- backspace
-        if #buf > 0 then
-          -- drop one unicode char, not one byte (else Cyrillic splits)
-          local done = false
-          if hostUnicode then
-            local okL, ulen = pcall(hostUnicode.len, buf)
-            if okL and type(ulen) == "number" and ulen > 0 then
-              local okS, nb = pcall(hostUnicode.sub, buf, 1, ulen - 1)
-              if okS and type(nb) == "string" then buf = nb done = true end
-            end
-          end
-          if not done then buf = buf:sub(1, -2) end
+      elseif code == 14 then                   -- backspace (before cursor)
+        if pos > 0 then
+          local a = pos > 1 and usub(buf, 1, pos - 1) or ""
+          local b = usub(buf, pos + 1)
+          buf = a .. b
+          pos = pos - 1
           redraw()
         end
+      elseif code == 211 and pos < bufLen() then -- delete (at cursor)
+        local a = pos > 0 and usub(buf, 1, pos) or ""
+        local b = usub(buf, pos + 2)
+        buf = a .. b
+        redraw()
+      elseif code == 203 then                   -- left
+        if pos > 0 then pos = pos - 1 redraw() end
+      elseif code == 205 then                   -- right
+        if pos < bufLen() then pos = pos + 1 redraw() end
+      elseif code == 199 then                   -- home
+        if pos ~= 0 then pos = 0 redraw() end
+      elseif code == 207 then                   -- end
+        local len = bufLen()
+        if pos ~= len then pos = len redraw() end
       elseif code == 200 and not echo then     -- up: older (off in pw fields)
         if termSt.histPos > 1 then
           termSt.histPos = termSt.histPos - 1
           buf = termSt.hist[termSt.histPos] or ""
+          pos = bufLen()
           redraw()
         end
       elseif code == 208 and not echo then     -- down: newer (off in pw fields)
         if termSt.histPos <= #termSt.hist then
           termSt.histPos = termSt.histPos + 1
           buf = termSt.hist[termSt.histPos] or ""
+          pos = bufLen()
           redraw()
         end
       elseif code == 15 and not echo and p.completer then -- tab
@@ -864,8 +908,11 @@ local function ttyReadLine(p, mask, seed)
           local prefix = buf:sub(1, #buf - #word)
           if #matches == 1 then
             buf = prefix .. matches[1] .. " "
+            pos = bufLen()
             redraw()
           else
+            pos = bufLen()
+            redraw()
             ttyHideCursor()
             ttyNewline()
             ttyWrite(table.concat(matches, "  ") .. "\n")
@@ -881,16 +928,12 @@ local function ttyReadLine(p, mask, seed)
         local okCh, chStr = false, nil
         if hostUnicode then okCh, chStr = pcall(hostUnicode.char, char) end
         if okCh and type(chStr) == "string" and chStr ~= "" then
-          buf = buf .. chStr
-          ttyHideCursor()
-          if g then g.set(termSt.cx, termSt.cy, echo or chStr) end
-          local adv = 1
-          if hostUnicode then
-            local okW, cw = pcall(hostUnicode.wlen, chStr)
-            if okW and type(cw) == "number" and cw > 0 then adv = cw end
-          end
-          termSt.cx = termSt.cx + adv
-          ttyShowCursor()
+          -- insert at the cursor, not always at the end
+          local a = pos > 0 and usub(buf, 1, pos) or ""
+          local b = usub(buf, pos + 1)
+          buf = a .. chStr .. b
+          pos = pos + 1
+          redraw()
         end
         -- undecodable char: ignore the keystroke instead of killing sh
       end
