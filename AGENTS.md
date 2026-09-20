@@ -26,7 +26,9 @@ Freax is a from-scratch OpenOS replacement for OpenComputers (Minecraft
 - `selfcheck.lua`, `mksums.lua` and `.gitignore` are dev-only (in
   `manifest` for demo protection, but not installed)
 - `SHA256SUMS` (repo root) is the per-file checksum index for efficient OS
-  updates; regenerate with `luajit mksums.lua` (never installed)
+  updates; regenerate with `luajit mksums.lua`. It is shipped/installed too:
+  the installed copy records synced hashes so `sysupdate`/`sysupgrade`
+  compare tables instead of re-hashing every file.
 
 ## Adding a file? Update `manifest`
 

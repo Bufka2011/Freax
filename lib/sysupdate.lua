@@ -258,15 +258,26 @@ function sysupdate.update(opts)
   local n = #files
   local changed = n
   local changedList = nil
+  -- /SHA256SUMS on the installed system records the hashes of the files as
+  -- of the last sync, so a changed-file scan is a table compare. Hashing
+  -- every file with pure-Lua SHA-256 takes minutes; only do it when the
+  -- file is missing (first run / pre-checksum install).
+  local lsums = parseSums(fs.readFile("/SHA256SUMS"))
+  local haveLocal = next(lsums) ~= nil
   if localVersion() ~= remote and sums then
     changedList = {}
     for _, dst in ipairs(files) do
       if not (SKIP_DEV[dst] or PRESERVE[dst])
+        and dst ~= "/SHA256SUMS"
         and not (dst == "/etc/apt/sources.list" and fs.exists(dst)) then
         local want = sums[dst]
-        if not want or sha256File(dst) ~= want then
-          changedList[#changedList + 1] = dst
+        local differs
+        if haveLocal then
+          differs = lsums[dst] ~= want
+        else
+          differs = (not want) or (sha256File(dst) ~= want)
         end
+        if differs then changedList[#changedList + 1] = dst end
       end
       coroutine.yield()
     end
@@ -321,16 +332,22 @@ function sysupdate.upgrade(opts)
   end
   local files = parseManifest(man)
   -- Remote checksums (cached by `apt sysupdate`, else fetched now).
-  local sums = parseSums(fs.readFile(CACHE_SUMS))
+  local sumsRaw = fs.readFile(CACHE_SUMS)
+  local sums = parseSums(sumsRaw)
   if next(sums) == nil then sums = nil end
   if not sums then
     local st = fetchText(src .. "SHA256SUMS")
     if st then
+      sumsRaw = st
       sums = parseSums(st)
       if next(sums) == nil then sums = nil end
     end
   end
   sums = validSums(fetchText(src .. "VERSION"), sums)
+  -- Local /SHA256SUMS: installed-file hashes, so skipping is a table
+  -- compare instead of re-hashing every file.
+  local lsums = parseSums(fs.readFile("/SHA256SUMS"))
+  local haveLocal = next(lsums) ~= nil
   -- Changed set cached by `apt sysupdate`: avoids re-hashing every file.
   local changedSet = nil
   if sums then
@@ -354,8 +371,25 @@ function sysupdate.upgrade(opts)
     io.write("Already up to date (" .. localVersion() .. ").\n")
     return 0
   end
+  -- Report what will actually be fetched, not the whole manifest size.
+  local toFetch
+  if changedSet then
+    toFetch = 0
+    for _ in pairs(changedSet) do toFetch = toFetch + 1 end
+  elseif haveLocal then
+    toFetch = 0
+    for _, dst in ipairs(files) do
+      if not (SKIP_DEV[dst] or PRESERVE[dst]) and dst ~= "/SHA256SUMS"
+        and not (dst == "/etc/apt/sources.list" and fs.exists(dst))
+        and lsums[dst] ~= (sums and sums[dst]) then
+        toFetch = toFetch + 1
+      end
+    end
+  else
+    toFetch = #files
+  end
   io.write("Upgrading " .. localVersion() .. " -> " .. remote ..
-    " (" .. #files .. " files)...\n")
+    " (" .. toFetch .. " files)...\n")
   local yes = opts.yes or opts.y
   if not yes then
     term.write("Continue? [Y/n]: ")
@@ -372,11 +406,15 @@ function sysupdate.upgrade(opts)
       skipN = skipN + 1
     elseif dst == "/etc/apt/sources.list" and fs.exists(dst) then
       skipN = skipN + 1
+    elseif dst == "/SHA256SUMS" then
+      skipN = skipN + 1 -- written from the fetched remote sums below
     else
       local want = sums and sums[dst]
       local needs
       if changedSet then
         needs = changedSet[dst] and true or false
+      elseif haveLocal then
+        needs = lsums[dst] ~= want
       elseif want then
         needs = sha256File(dst) ~= want
       else
@@ -431,6 +469,11 @@ function sysupdate.upgrade(opts)
   if vfd then fs.write(vfd, remote .. "\n") fs.close(vfd) end
   local mfd = fs.open("/manifest", "w")
   if mfd then fs.write(mfd, man) fs.close(mfd) end
+  -- Record the synced hashes so the next run needs no re-hashing.
+  if sumsRaw and sums then
+    local sfd = fs.open("/SHA256SUMS", "w")
+    if sfd then fs.write(sfd, sumsRaw) fs.close(sfd) end
+  end
   io.write("Upgraded to " .. remote .. ".\n")
   if kernelTouched then
     term.write("Kernel updated. Reboot now? [y/N]: ")
