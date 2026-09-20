@@ -707,7 +707,7 @@ local function ttyReadLine(p, mask, seed)
   local g = gpu0()
   local buf = ""
   local sx, sy = termSt.cx, termSt.cy
-  local w = ttySize()
+  local w, h = ttySize()
   local echo = (mask == true and "*")
     or (type(mask) == "string" and mask ~= "" and mask) or nil
   -- Optional seed history (term.read(history,...)): copy entries in so
@@ -738,12 +738,47 @@ local function ttyReadLine(p, mask, seed)
   local function shown()
     return echo and echo:rep(bufLen()) or buf
   end
+  -- Wrapped line editor display. gpu.set does NOT wrap (ttyWriteRaw
+  -- splits runs by hand), so a long input used to clip at the row edge
+  -- and look truncated. Render it across as many rows as needed, scroll
+  -- the screen up when it would run off the bottom, and track the cursor
+  -- on the wrapped row.
+  local prevRows = 0
   local function redraw()
-    if not g then termSt.cx = sx + bufWidth() return end
+    local text = shown()
+    local total = bufWidth()
+    local rows = math.floor((sx - 1 + total) / w)
+    if not g then
+      termSt.cx = ((sx - 1 + total) % w) + 1
+      termSt.cy = sy + rows
+      return
+    end
     ttyHideCursor()
+    local overflow = (sy + rows) - h
+    if overflow > 0 then
+      for _ = 1, overflow do
+        pcall(g.copy, 1, 2, w, h - 1, 0, -1)
+        pcall(g.fill, 1, h, w, 1, " ")
+      end
+      sy = math.max(1, sy - overflow)
+    end
+    local clearRows = math.max(rows, prevRows)
     g.fill(sx, sy, w - sx + 1, 1, " ")
-    g.set(sx, sy, shown())
-    termSt.cx = sx + bufWidth()
+    for r = 1, clearRows do
+      if sy + r <= h then g.fill(1, sy + r, w, 1, " ") end
+    end
+    prevRows = rows
+    local cx, cy = sx, sy
+    local i, n = 1, #text
+    while i <= n do
+      local room = w - cx + 1
+      local j = math.min(n, i + room - 1)
+      g.set(cx, cy, text:sub(i, j))
+      cx = cx + (j - i + 1)
+      i = j + 1
+      if i <= n then cx, cy = 1, cy + 1 end
+    end
+    termSt.cx, termSt.cy = cx, cy
     ttyShowCursor()
   end
   while true do
@@ -756,7 +791,6 @@ local function ttyReadLine(p, mask, seed)
         buf = buf .. pasteQueue:sub(1, nl - 1)
         pasteQueue = pasteQueue:sub(nl + 1)
         redraw()
-        termSt.cx = sx + bufWidth()
         ttyNewline()
         if not echo then
           termSt.hist[#termSt.hist + 1] = buf
@@ -791,7 +825,6 @@ local function ttyReadLine(p, mask, seed)
         ttyNewline()
         return nil
       elseif code == 28 then                       -- enter
-        termSt.cx = sx + bufWidth()
         ttyNewline()
         if not echo then
           termSt.hist[#termSt.hist + 1] = buf
@@ -840,7 +873,9 @@ local function ttyReadLine(p, mask, seed)
             redraw()
           end
         end
-      elseif type(char) == "number" and char > 0 then -- printable
+      elseif type(char) == "number" and char >= 32 then -- printable
+        -- Control chars (< 32) and modifier keys (Win/Super/Alt report
+        -- char 0) are ignored, matching OpenOS: only 32+ is text.
         -- string.char (0-255) throws on Cyrillic/CJK codepoints and some
         -- emulator key events; unicode.char covers full Unicode -> UTF-8.
         local okCh, chStr = false, nil
