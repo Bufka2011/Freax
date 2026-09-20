@@ -78,8 +78,15 @@ end
 function shell.resolveCmd(name)
   if name:find("/") then return shell.resolve(name) end
   local PATH = (os and os.getenv and os.getenv("PATH")) or "/bin"
+  local cwd = shell.getWorkingDirectory()
   for dir in PATH:gmatch("[^:]+") do
-    for _, cand in ipairs({ dir .. "/" .. name .. ".lua", dir .. "/" .. name }) do
+    -- Resolve each search dir against cwd so we always return an absolute
+    -- path. A relative "." PATH entry used to return "./name", which the
+    -- kernel then resolved against / instead of the caller's cwd.
+    local base
+    if dir:sub(1, 1) == "/" then base = dir
+    else base = freax.fsCanonical(freax.fsConcat(cwd, dir)) end
+    for _, cand in ipairs({ base .. "/" .. name .. ".lua", base .. "/" .. name }) do
       if freax.fsExists(cand) then return cand end
     end
   end

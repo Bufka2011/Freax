@@ -2447,7 +2447,8 @@ function K.spawn(name, path, args, stdio, inh)
     if not okAll then closeOwnedFds(p.pid) return nil, "bad stdio" end
   end
   local env = makeEnv(p)
-  local abs = vfsAbs(path, "/")
+  -- resolve a relative program path against the caller's cwd, not /
+  local abs = vfsAbs(path, p.cwd or "/")
   local fn, lerr = vfsLoad(abs, path, env)
   if not fn then
     local base = path:match("([^/]+)$")
