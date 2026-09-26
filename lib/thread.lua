@@ -38,6 +38,7 @@ end
 local function runScheduler()
   while true do
     local tnow = now()
+    event._dispatchTimeouts()
     -- 1. wake sleepers whose time came
     for _, t in ipairs(threads) do
       if t.status == "running" and t.wake and t.wake <= tnow then
@@ -125,6 +126,7 @@ local function runScheduler()
       end
       if interested then
         local sig = table.pack(freax.pullEvent()) -- take the peeked head
+        event._dispatch(sig)
         local function matches(filter)
           return filter == nil or filter(table.unpack(sig, 1, sig.n))
         end

@@ -2296,17 +2296,6 @@ local function makeEnv(p)
     end
     return nil
   end
-  local function waitPid(cpid)
-    p.waitingFor = cpid
-    while true do
-      local found
-      for _, q in ipairs(procs) do
-        if q.pid == cpid then found = q break end
-      end
-      if not found or found.dead then p.waitingFor = nil break end
-      coroutine.yield()
-    end
-  end
   osT.execute = function(cmd)
     if not cmd then return false end
     local args = {}
@@ -2324,8 +2313,10 @@ local function makeEnv(p)
       { in_ = fdOf(p.ioT[1]), out = fdOf(p.ioT[2]), err = fdOf(p.ioT[3]) },
       myInh())
     if not cpid then return nil, "cannot execute" end
-    waitPid(cpid)
-    return true
+    local code, werr = freax.wait(cpid)
+    if code == nil then return nil, tostring(werr or "wait failed") end
+    if code == 0 then return true, "exit", 0 end
+    return nil, "exit", code
   end
   env.os = osProxy
 

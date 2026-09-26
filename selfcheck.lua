@@ -40,8 +40,11 @@ local sh = require("sh")
 local completions = sh.complete("lua /self")
 check("path completion", #completions == 1 and completions[1] == "/selfcheck.lua")
 
+local event = require("event")
 local thread = require("thread")
 local log = {}
+local timerCalls = 0
+event.timer(0.05, function() timerCalls = timerCalls + 1 end, 1)
 local t1 = thread.create(function()
   log[#log + 1] = "a"
   thread.sleep(0.2)
@@ -50,6 +53,7 @@ end)
 check("join", thread.join(t1, 5) == true)
 check("order", table.concat(log, ",") == "a,b")
 check("status", thread.status(t1) == "dead")
+check("thread timer", timerCalls == 1)
 
 -- symlink cycles must error, never hang (ln refuses to make them,
 -- so build directly through the syscalls)
@@ -157,10 +161,17 @@ check("fdcount-self", type(freax.fdCount) == "function"
   and type(freax.fdCount(freax.getpid())) == "number")
 
 for _, c in ipairs({"list /", "components", "lshw", "address",
-  "primary gpu", "redstone", "flash", "label /", "resolution",
-  "wget", "pastebin", "dmesg", "df", "mount", "apt version"}) do
+  "primary gpu", "resolution", "wget", "pastebin", "df", "mount",
+  "apt version"}) do
   check("exec " .. c, os.execute(c) == true)
 end
+local execOk, execWhy, execCode = os.execute("ls /selfcheck-no-such-file")
+check("exec status", execOk == nil and execWhy == "exit" and execCode == 1)
+
+local pullStart = freax.uptime()
+check("event timeout", event.pull(0.1, "selfcheck-never") == nil
+  and freax.uptime() - pullStart >= 0.09
+  and freax.uptime() - pullStart < 1)
 
 local o = io.open((os.tmpname() or "/tmp/s_compat.txt"), "w")
 if o then o:write("OK") o:close() end

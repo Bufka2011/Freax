@@ -1,7 +1,5 @@
 -- event: OpenOS-compatible event lib (M2 compat).
--- Implemented purely on freax.pullEvent/pollEvent + freax.uptime.
--- Caveat: timeouts only resolve when a signal arrives or is queued;
--- a fully idle machine will not wake a timed pull early.
+-- Implemented on deadline-aware computer.pullSignal plus Freax event queues.
 
 local freax = freax
 local computer = require("computer")
@@ -17,9 +15,11 @@ event._taps = {} -- keyboard state feeds here
 local nextId = 0
 
 function event.register(key, callback, interval, times, opt)
+  interval = tonumber(interval) or math.huge
+  if interval <= 0 then interval = 0.05 end
   local h = {
     key = key, times = times or 1, callback = callback,
-    interval = interval or math.huge,
+    interval = interval,
   }
   h.timeout = freax.uptime() + h.interval
   opt = opt or handlers
@@ -59,11 +59,13 @@ function event.onError(msg)
   freax.ttyWrite("event error: " .. tostring(msg) .. "\n")
 end
 
-local function dispatch(sig)
+local function dispatch(sig, timeoutOnly)
   local n = sig.n
   local name = sig[1]
-  for _, tap in ipairs(event._taps) do
-    pcall(tap, table.unpack(sig, 1, n))
+  if not timeoutOnly then
+    for _, tap in ipairs(event._taps) do
+      pcall(tap, table.unpack(sig, 1, n))
+    end
   end
   local now = freax.uptime()
   -- Ctrl+C interrupt handling
@@ -79,11 +81,13 @@ local function dispatch(sig)
   for id, h in pairs(handlers) do copy[id] = h end
   for id, h in pairs(copy) do
     -- nil keys match anything; timers (key == false) fire on timeout only
-    if h.key == nil or h.key == name or now >= h.timeout then
+    if (not timeoutOnly and (h.key == nil or h.key == name)) or now >= h.timeout then
         h.times = h.times - 1
         h.timeout = now + h.interval
         if h.times <= 0 and handlers[id] == h then handlers[id] = nil end
-        local ok, msg = pcall(h.callback, table.unpack(sig, 1, n))
+        local ok, msg
+        if timeoutOnly or h.key == false then ok, msg = pcall(h.callback)
+        else ok, msg = pcall(h.callback, table.unpack(sig, 1, n)) end
         if not ok then
           pcall(event.onError, msg)
         elseif msg == false and handlers[id] == h then
@@ -92,6 +96,20 @@ local function dispatch(sig)
     end
   end
 end
+
+function event._nextTimeout()
+  local nextTimeout = math.huge
+  for _, h in pairs(handlers) do
+    if h.timeout < nextTimeout then nextTimeout = h.timeout end
+  end
+  return nextTimeout
+end
+
+function event._dispatchTimeouts()
+  dispatch(table.pack(), true)
+end
+
+event._dispatch = dispatch
 
 local function pullOnce()
   local sig = table.pack(freax.pollEvent())
@@ -136,12 +154,17 @@ function event.pullFiltered(...)
       end
       -- else: raced away entirely (same-process thread took it): re-loop
     else
-      if freax.uptime() >= deadline then return nil end
-      local s = table.pack(freax.pullEvent()) -- blocks
-      dispatch(s)
-      if matches(s) then return table.unpack(s, 1, s.n) end
-      pen[#pen + 1] = s
-      if freax.uptime() >= deadline then return nil end
+      local now = freax.uptime()
+      if now >= deadline then return nil end
+      local wake = math.min(deadline, event._nextTimeout())
+      local s = table.pack(computer.pullSignal(math.max(0, wake - now)))
+      if s[1] ~= nil then
+        dispatch(s)
+        if matches(s) then return table.unpack(s, 1, s.n) end
+        pen[#pen + 1] = s
+      else
+        event._dispatchTimeouts()
+      end
     end
   end
 end

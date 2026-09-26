@@ -54,11 +54,12 @@ local function run(pasteId, ...)
   get(pasteId, tmpFile)
   io.write("Running...\n")
 
-  local success, reason = os.execute(tmpFile .. " " .. table.concat(table.pack(...), " "))
+  local success, reason, code = os.execute(tmpFile .. " " .. table.concat(table.pack(...), " "))
   if not success then
-    io.stderr:write(tostring(reason))
+    io.stderr:write(tostring(reason) .. (code and (" " .. code) or "") .. "\n")
   end
   fs.remove(tmpFile)
+  return code or (success and 0 or 1)
 end
 
 local function put(path)
@@ -131,8 +132,7 @@ elseif command == "get" then
   end
 elseif command == "run" then
   if #args >= 2 then
-    run(args[2], table.unpack(args, 3))
-    return
+    return run(args[2], table.unpack(args, 3))
   end
 end
 

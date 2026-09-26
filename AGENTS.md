@@ -51,8 +51,8 @@ features rather than duplicating that status here.
 - Shell parsing/execution is in `lib/sh.lua`; `bin/sh.lua` is the REPL and
   builtin registry. Its `runLine` call stays protected so command errors cannot
   kill the login shell.
-- `os.execute` waits for the child but returns `true` regardless of its exit
-  code; do not use it as a success test.
+- `os.execute` follows Lua 5.2 result shape: `true, "exit", 0` on success and
+  `nil, "exit", code` on child failure.
 
 ## Shared Libraries
 

@@ -10,7 +10,10 @@ if #args > 1 then
 end
 local cat_cmd = table.concat({"cat", ...}, " ")
 
-if not io.output().tty then return os.execute(cat_cmd) end
+if not io.output().tty then
+  local ok, _, code = os.execute(cat_cmd)
+  return code or (ok and 0 or 1)
+end
 
 local preader = io.popen(cat_cmd)
 local scrollback = not ops.noback and {}
