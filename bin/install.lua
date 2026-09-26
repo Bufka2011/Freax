@@ -299,7 +299,7 @@ if pwfd then
 end
 local shfd = fs.open(tmount .. "/etc/shadow", "w")
 if shfd then
-  fs.write(shfd, "root::\n")
+  fs.write(shfd, "root:\n")
   fs.close(shfd)
 end
 

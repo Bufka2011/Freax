@@ -72,9 +72,12 @@ end
 
 function auth.getShadow(user)
   for _, line in ipairs(readLines("/etc/shadow")) do
-    local name, rest = line:match("^([^:]*):(%S*)$")
+    local name, rest = line:match("^([^:]*):(.*)$")
     if name == user then
-      if rest == "" then
+      rest = (rest or ""):match("^(.-)%s*$")
+      -- empty password field. Accept a lone ":" too: install/webinstall
+      -- historically wrote "root::", and existing disks carry it.
+      if rest == "" or rest == ":" then
         return { salt = "", hash = "" }
       end
       local salt, hash = rest:match("^%$(.-)%$(.+)$")

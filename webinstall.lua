@@ -336,7 +336,7 @@ local function readPassword(prompt)
   return table.concat(buf)
 end
 
-local shadow = "root::\n"
+local shadow = "root:\n"
 io.write("Set root password (press Enter for none, change later with passwd):\n")
 local pw = readPassword("Password: ")
 if pw ~= "" then
@@ -357,7 +357,7 @@ if pw ~= "" then
     end
   end
 end
-if shadow == "root::\n" then
+if shadow == "root:\n" then
   io.write("Note: root has NO password. Set one with `passwd` after login.\n")
 end
 if not writeFile(target.path .. "/etc/shadow", shadow)
