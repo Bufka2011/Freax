@@ -134,7 +134,7 @@ file is re-hashed afterwards (`apt verify` re-checks the whole tree).
 - `etc/` - config (motd, passwd, shadow, hostname, apt sources).
 - `manifest` - shipped-file list driving `install`, the `sys` upgrade in
   `apt upgrade`, and demo protection.
-- `selfcheck.lua` - dev smoke test (not installed).
+- `selfcheck.lua` - installed in-game smoke test (`lua /selfcheck.lua`).
 
 ### Packages
 

@@ -56,6 +56,7 @@ local subj = name or (cmd == "status" and "all" or "")
 local ctlFile = CMD_PFX .. "." .. cmd .. "." .. subj
 local rspFile = RSP_PFX .. "." .. cmd .. "." .. subj
 
+fs.remove(rspFile)
 local fd = fs.open(ctlFile, "w")
 if not fd then
   io.write("error: cannot write " .. ctlFile .. " (systemd running?)\n")
@@ -67,7 +68,7 @@ fs.close(fd)
 local rsp, deadline = nil, freax.uptime() + 5
 while freax.uptime() < deadline do
   local data = fs.readFile(rspFile)
-  if data then
+  if data and #data > 0 then
     rsp = data
     fs.remove(rspFile)
     break
@@ -75,8 +76,12 @@ while freax.uptime() < deadline do
   freax.sleep(0.1)
 end
 
-if cmd == "status" then
-  io.write(rsp or name .. " not responding (systemd running?)\n")
-else
-  io.write(rsp or "timeout\n")
+local output = rsp
+if not output then
+  output = cmd == "status"
+    and ((name or "systemd") .. " not responding (systemd running?)")
+    or "timeout"
 end
+io.write(output:gsub("\n*$", "") .. "\n")
+if not rsp then return 1 end
+if cmd ~= "status" and rsp ~= "ok" then return 1 end

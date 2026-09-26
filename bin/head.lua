@@ -1,7 +1,52 @@
-local shell = require("shell")
-
-local args, options = shell.parse(...)
+local raw = table.pack(...)
+local args, options = {}, {}
 local error_code = 0
+
+local i = 1
+while i <= raw.n do
+  local arg = tostring(raw[i])
+  if arg == "--" then
+    for j = i + 1, raw.n do args[#args + 1] = raw[j] end
+    break
+  elseif arg:match("^%-%d+$") then
+    options.lines = arg:sub(2)
+    options.bytes = nil
+  elseif arg == "-n" or arg == "--lines" or arg == "-c" or arg == "--bytes" then
+    local key = (arg == "-n" or arg == "--lines") and "lines" or "bytes"
+    i = i + 1
+    if i > raw.n then
+      io.stderr:write("head: option requires an argument -- '" .. arg .. "'\n")
+      options.help = true
+      error_code = 1
+      break
+    end
+    options[key] = raw[i]
+    options[key == "lines" and "bytes" or "lines"] = nil
+  elseif arg:match("^%-n.+") then
+    options.lines = arg:sub(3)
+    options.bytes = nil
+  elseif arg:match("^%-c.+") then
+    options.bytes = arg:sub(3)
+    options.lines = nil
+  elseif arg:match("^%-%-lines=") then
+    options.lines = arg:sub(9)
+    options.bytes = nil
+  elseif arg:match("^%-%-bytes=") then
+    options.bytes = arg:sub(9)
+    options.lines = nil
+  elseif arg == "-q" or arg == "--quiet" or arg == "--silent" then
+    options.quiet = true
+  elseif arg == "-v" or arg == "--verbose" then
+    options.verbose = true
+  elseif arg == "--help" then
+    options.help = true
+  elseif arg:sub(1, 1) == "-" and arg ~= "-" then
+    options[arg] = true
+  else
+    args[#args + 1] = raw[i]
+  end
+  i = i + 1
+end
 
 local function pop(key, convert)
   local result = options[key]
@@ -54,10 +99,11 @@ if quiet and verbose then
 end
 
 local function new_stream()
+  local capacity = math.abs(lines or bytes or 10)
   return
   {
-    open = true,
-    capacity = math.abs(lines or bytes or 10),
+    open = capacity > 0,
+    capacity = capacity,
     bytes = bytes,
     buffer = (lines and lines < 0 and {}) or (bytes and bytes < 0 and '')
   }

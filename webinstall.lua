@@ -28,7 +28,6 @@ local USER_AGENT = "Freax/WebInstall"
 local SKIP = {
   ["/.gitignore"] = true,
   ["/README.md"] = true,
-  ["/selfcheck.lua"] = true,
   ["/etc/hostname"] = true,
   ["/etc/passwd"] = true,
   ["/etc/shadow"] = true,

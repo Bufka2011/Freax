@@ -15,8 +15,8 @@ DESCRIPTION
   streams every file to the target in chunks (a file never has to fit in
   RAM), then generates the account database, labels the target, and sets the
   machine boot address. Files that are dev-only or machine-local
-  (.gitignore, README.md, selfcheck.lua, /etc/passwd, /etc/shadow,
-  /etc/hostname) are never downloaded.
+  (.gitignore, README.md, /etc/passwd, /etc/shadow, /etc/hostname) are never
+  downloaded.
 
   This program uses the OpenOS libraries (filesystem, component, internet,
   shell, term, computer) and does not run on Freax itself.

@@ -1,4 +1,4 @@
--- selfcheck: runs inside Freax via `lua /selfcheck.lua` (dev tool, not installed)
+-- selfcheck: in-game smoke test, run via `lua /selfcheck.lua`
 local function check(n, c)
   if not c then
     -- root may be read-only (uninstalled media): try tmp too.
@@ -12,7 +12,7 @@ local function check(n, c)
 end
 
 -- memory accounting: freeMemory delta per require tells us which lib is
--- worth optimizing (selfcheck is dev-only; harmless if freax.freeMem absent)
+-- worth optimizing (harmless if freax.freeMem is absent)
 local fm = freax and freax.freeMem
 if fm then io.write("free before requires: " .. tostring(fm()) .. " bytes\n") end
 for _, m in ipairs({"text","transforms","colors","note","pipe",

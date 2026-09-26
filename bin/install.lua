@@ -137,7 +137,6 @@ end
 local SKIP_INSTALL = {
   ["/.gitignore"] = true,
   ["/README.md"] = true,
-  ["/selfcheck.lua"] = true,
   ["/mksums.lua"] = true,
   ["/etc/hostname"] = true, -- local-only, per machine
 }

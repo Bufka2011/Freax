@@ -10,12 +10,6 @@ local sh = require("sh")
 
 local builtins = {}
 
-builtins.echo = function(...)
-  local out = {}
-  for i = 1, select("#", ...) do out[#out + 1] = tostring(select(i, ...)) end
-  io.write(table.concat(out, " ") .. "\n")
-end
-
 builtins.clear = function() term.clear() end
 
 builtins.ps = function()

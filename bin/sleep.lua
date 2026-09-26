@@ -32,10 +32,4 @@ for _, v in ipairs(args) do
   total = total + mult * interval
 end
 
-local event = require("event")
-local computer = require("computer")
-local deadline = computer.uptime() + total
-while computer.uptime() < deadline do
-  local sig = event.pull(deadline - computer.uptime(), "interrupted")
-  if sig == "interrupted" then return end
-end
+os.sleep(total)

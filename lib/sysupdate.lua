@@ -29,7 +29,6 @@ local CACHE_CHANGED = CACHE_DIR .. "/changed"
 local SKIP_DEV = {
   ["/.gitignore"] = true,
   ["/README.md"] = true,
-  ["/selfcheck.lua"] = true,
   ["/mksums.lua"] = true,
 }
 -- Local state the updater must never overwrite.

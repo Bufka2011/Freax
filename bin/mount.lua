@@ -30,6 +30,11 @@ if next(opts) then
   return 1
 end
 
+if freax.geteuid() ~= 0 then
+  io.stderr:write("mount: requires root\n")
+  return 1
+end
+
 if #args == 0 then
   local mounts = freax.fsMounts()
   table.sort(mounts, function(a, b)

@@ -704,6 +704,11 @@ function sh.internal.evaluate(words)
 
   local repack = false
   for _, word in ipairs(words) do
+    local first = word[1]
+    if first and not first.qr
+      and (first.txt == "~" or first.txt:sub(1, 2) == "~/") then
+      first.txt = (os.getenv("HOME") or "") .. first.txt:sub(2)
+    end
     for _, part in pairs(word) do
       if not (part.qr or {})[3] then
         local expanded = sh.expand(part.txt)
