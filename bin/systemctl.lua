@@ -39,12 +39,7 @@ if cmd == "list-units" then
   return
 end
 
-if cmd == "daemon-reload" then
-  local fd = fs.open(CMD_PFX .. ".reload.systemd", "w")
-  if fd then fs.close(fd) end
-  io.write("Reload requested.\n")
-  return
-end
+if cmd == "daemon-reload" then cmd, name = "reload", "systemd" end
 
 if not name and cmd ~= "status" then
   io.write("Usage: systemctl " .. cmd .. " NAME\n")

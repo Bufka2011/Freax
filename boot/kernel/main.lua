@@ -1011,40 +1011,52 @@ local sharedEnv = {}
 -- requesting process, so a transient program (selfcheck, a one-shot tool)
 -- frees its libs on exit instead of permanently raising the memory floor.
 local SHARED = {
-  fs = true, shell = true, term = true, sh = true, text = true,
+  fs = true, term = true, text = true,
   transforms = true, package = true, filesystem = true,
 }
 
 local freaxProxy, ioProxy, osProxy = {}, {}, {}
 local proxiesReady = false
-local function initProxies(rawFreax, rawIO, rawOS)
+local function initProxies()
   if proxiesReady then return end
   proxiesReady = true
-  for k, v in pairs(rawFreax) do
-    if type(v) == "function" then
-      freaxProxy[k] = function(...) return currentP.rawFreax[k](...) end
-    end
-  end
-  for k, v in pairs(rawIO) do
-    if type(v) == "function" then
-      ioProxy[k] = function(...) return currentP.rawIO[k](...) end
-    end
-  end
-  for k, v in pairs(rawOS) do
-    if type(v) == "function" then
-      osProxy[k] = function(...) return currentP.rawOS[k](...) end
-    end
-  end
 end
 setmetatable(freaxProxy, { __index = function(_, k)
   return currentP and currentP.rawFreax[k]
-end })
+end, __newindex = function() error("read-only syscall table", 2) end,
+  __metatable = false })
 setmetatable(ioProxy, { __index = function(_, k)
   return currentP and currentP.rawIO[k]
-end })
+end, __newindex = function() error("read-only io table", 2) end,
+  __metatable = false })
 setmetatable(osProxy, { __index = function(_, k)
   return currentP and currentP.rawOS[k]
-end })
+end, __newindex = function() error("read-only os table", 2) end,
+  __metatable = false })
+
+local protectedTables = {
+  [freaxProxy] = true, [ioProxy] = true, [osProxy] = true,
+}
+local function readonly(source, label)
+  local proxy = {}
+  protectedTables[proxy] = true
+  return setmetatable(proxy, {
+    __index = source,
+    __newindex = function() error("read-only " .. label, 2) end,
+    __pairs = function() return pairs(source) end,
+    __metatable = false,
+  })
+end
+local safeString = readonly(string, "string library")
+local safeTable = readonly(table, "table library")
+local safeMath = readonly(math, "math library")
+local safeBit32 = readonly(bit32, "bit32 library")
+local safeCoroutine = readonly(coroutine, "coroutine library")
+local safeUnicode = readonly(hostUnicode or {}, "unicode library")
+local function safeRawset(t, k, v)
+  if protectedTables[t] then error("attempt to modify read-only table", 2) end
+  return rawset(t, k, v)
+end
 
 local function readLibSource(name)
   local stem = name:gsub("%.", "/")
@@ -1157,14 +1169,16 @@ local sharedComputer = {
     if first[1] ~= nil then return table.unpack(first, 1, first.n) end
     if computer.uptime() >= deadline then return nil end
     while computer.uptime() < deadline do
-      if freaxProxy.peekEvent() then coroutine.yield()
-      else return procPull(p) end
+      coroutine.yield()
+      local sig = table.pack(freaxProxy.pollEvent())
+      if sig[1] ~= nil then return table.unpack(sig, 1, sig.n) end
     end
     return nil
   end,
   pushSignal = function() return nil, "signal injection denied under Freax" end,
   beep = function(freq, dur) return freaxProxy.beep(freq, dur) end,
 }
+sharedComputer = readonly(sharedComputer, "computer library")
 
 local function sharedCheckArg(n, val, ...)
   local exp = table.pack(...)
@@ -1183,11 +1197,11 @@ local function sharedPrint(...)
   sharedRequire("term").writeln(table.concat(parts, "\t"))
 end
 
-sharedEnv.string = string
-sharedEnv.table = table
-sharedEnv.math = math
-sharedEnv.bit32 = bit32
-sharedEnv.coroutine = coroutine
+sharedEnv.string = safeString
+sharedEnv.table = safeTable
+sharedEnv.math = safeMath
+sharedEnv.bit32 = safeBit32
+sharedEnv.coroutine = safeCoroutine
 sharedEnv.assert = assert
 sharedEnv.error = error
 sharedEnv.ipairs = ipairs
@@ -1203,10 +1217,10 @@ sharedEnv.unpack = table.unpack
 sharedEnv.setmetatable = setmetatable
 sharedEnv.getmetatable = getmetatable
 sharedEnv.rawget = rawget
-sharedEnv.rawset = rawset
+sharedEnv.rawset = safeRawset
 sharedEnv.rawequal = rawequal
 sharedEnv.rawlen = rawlen
-sharedEnv.unicode = hostUnicode
+sharedEnv.unicode = safeUnicode
 sharedEnv.freax = freaxProxy
 sharedEnv.io = ioProxy
 sharedEnv.os = osProxy
@@ -1231,11 +1245,11 @@ local function makeEnv(p)
   local env = {}
 
   -- standard library subset
-  env.string       = string
-  env.table        = table
-  env.math         = math
-  env.bit32        = bit32
-  env.coroutine    = coroutine
+  env.string       = safeString
+  env.table        = safeTable
+  env.math         = safeMath
+  env.bit32        = safeBit32
+  env.coroutine    = safeCoroutine
   env.assert       = assert
   env.error        = error
   env.ipairs       = ipairs
@@ -1251,10 +1265,10 @@ local function makeEnv(p)
   env.setmetatable = setmetatable
   env.getmetatable = getmetatable
   env.rawget       = rawget
-  env.rawset       = rawset
+  env.rawset       = safeRawset
   env.rawequal     = rawequal
   env.rawlen       = rawlen
-  env.unicode      = unicode
+  env.unicode      = safeUnicode
 
   -- OpenOS compat: argument type checking used by many libs
   function env.checkArg(n, val, ...)
@@ -1348,7 +1362,7 @@ local function makeEnv(p)
   function freax.sleep(sec)
     local deadline = computer.uptime() + (sec or 0)
     while computer.uptime() < deadline do
-      if freax.peekEvent() then coroutine.yield() else procPull(p) end
+      coroutine.yield()
     end
   end
 
@@ -1544,25 +1558,25 @@ local function makeEnv(p)
   end
   function freax.fsRead(fd, n)
     local e = fds[fd]
-    if not e then return nil, "bad fd" end
+    if not e or e.owner ~= p.pid then return nil, "bad fd" end
     if e.pipe then return pipeRead(e.pipe, n or 4096, p) end
     if e.net then
-      local ok, chunk = pcall(e.net.read)
+      local ok, chunk, err = pcall(e.net.read)
       if not ok then return nil, tostring(chunk) end
-      return chunk
+      return chunk, err
     end
     if e.sock then
-      local ok, chunk = pcall(e.sock.read, n or 4096)
+      local ok, chunk, err = pcall(e.sock.read, n or 4096)
       if not ok then return nil, tostring(chunk) end
-      return chunk
+      return chunk, err
     end
-    local ok, chunk = pcall(e.proxy.read, e.h, n or 4096)
+    local ok, chunk, err = pcall(e.proxy.read, e.h, n or 4096)
     if not ok then return nil, tostring(chunk) end
-    return chunk
+    return chunk, err
   end
   function freax.fsWrite(fd, data)
     local e = fds[fd]
-    if not e then return nil, "bad fd" end
+    if not e or e.owner ~= p.pid then return nil, "bad fd" end
     if e.pipe then
       local ok, err = pipeWrite(e.pipe, tostring(data), p)
       if not ok then return nil, tostring(err) end
@@ -1574,8 +1588,8 @@ local function makeEnv(p)
       while #rest > 0 do
         local ok, n = pcall(e.sock.write, rest)
         if not ok or not n then return nil, tostring(n) end
+        if n <= 0 then return nil, "socket made no write progress" end
         rest = rest:sub((n or 0) + 1)
-        if (n or 0) <= 0 then break end
       end
       return true
     end
@@ -1585,7 +1599,7 @@ local function makeEnv(p)
   end
   function freax.fsClose(fd)
     local e = fds[fd]
-    if not e then return nil end
+    if not e or e.owner ~= p.pid then return nil, "bad fd" end
     closeFdEntry(e)
     fds[fd] = nil
     return true
@@ -1631,7 +1645,7 @@ local function makeEnv(p)
     local abs = vfsAbs(key, "/")
     for i, m in ipairs(mounts) do
       if m.path ~= "/" and (m.path == abs or m.addr == key
-        or m.addr:sub(1, #key) == key) then
+        or (m.addr and m.addr:sub(1, #key) == key)) then
         table.remove(mounts, i)
         return true
       end
@@ -1804,7 +1818,7 @@ local function makeEnv(p)
   end
   function freax.netResponse(fd)
     local e = fds[fd]
-    if not e or not e.net or not e.net.response then
+    if not e or e.owner ~= p.pid or not e.net or not e.net.response then
       return nil, "bad net fd"
     end
     local ok, a, b, c = pcall(e.net.response)
@@ -1813,10 +1827,12 @@ local function makeEnv(p)
   end
   function freax.netFinish(fd)
     local e = fds[fd]
-    if not e or not e.net then return nil, "bad net fd" end
+    if not e or e.owner ~= p.pid or not e.net then return nil, "bad net fd" end
     if not e.net.finishConnect then return true end
-    local ok, r = pcall(e.net.finishConnect)
-    return ok and true or nil, ok and nil or tostring(r)
+    local ok, r, err = pcall(e.net.finishConnect)
+    if not ok then return nil, tostring(r) end
+    if r == false or r == nil then return nil, tostring(err or "connect failed") end
+    return true
   end
   -- Raw TCP (internet.socket): streams support read AND write.
   function freax.netConnect(address)
@@ -1924,8 +1940,9 @@ local function makeEnv(p)
     end
     -- overwriting a link removes the link first (no stale shadows)
     if links[nNoFollow] then links[nNoFollow] = nil end
-    local oAbs, nAbs = oNoFollow, expandLinks(absOf(newPath), true)
-    if not nAbs then return nil, nErr end
+    local oAbs = oNoFollow
+    local nAbs, nFollowErr = expandLinks(absOf(newPath), true)
+    if not nAbs then return nil, nFollowErr end
     local oProxy, oRest = vfsResolve(oAbs)
     local nProxy, nRest = vfsResolve(nAbs)
     if not oProxy or not nProxy then return nil, "no such filesystem" end
@@ -1942,15 +1959,32 @@ local function makeEnv(p)
     if not ok or not ih then return nil, "cannot read source" end
     local ok2, oh = pcall(nProxy.open, nRest, "w")
     if not ok2 or not oh then pcall(oProxy.close, ih) return nil, "cannot write target" end
+    local copyOk, copyErr = true, nil
     while true do
-      local rok, chunk = pcall(oProxy.read, ih, 4096)
-      if not rok or not chunk then break end
-      local wok = pcall(nProxy.write, oh, chunk)
-      if not wok then break end
+      local rok, chunk, rerr = pcall(oProxy.read, ih, 4096)
+      if not rok then copyOk, copyErr = false, chunk break end
+      if not chunk then
+        if rerr then copyOk, copyErr = false, rerr end
+        break
+      end
+      local wok, wr, werr = pcall(nProxy.write, oh, chunk)
+      if not wok or not wr then
+        copyOk, copyErr = false, werr or wr
+        break
+      end
     end
-    pcall(oProxy.close, ih)
-    pcall(nProxy.close, oh)
-    pcall(oProxy.remove, oRest)
+    local icok, icr = pcall(oProxy.close, ih)
+    local ocok, ocr = pcall(nProxy.close, oh)
+    if not icok then copyOk, copyErr = false, icr end
+    if not ocok or ocr == false then copyOk, copyErr = false, ocr end
+    if not copyOk then
+      pcall(nProxy.remove, nRest)
+      return nil, tostring(copyErr or "copy failed")
+    end
+    local rmok, removed, rmerr = pcall(oProxy.remove, oRest)
+    if not rmok or not removed then
+      return nil, tostring(rmerr or removed or "cannot remove source")
+    end
     return true
   end
 
@@ -2033,7 +2067,7 @@ local function makeEnv(p)
   env.freax = freaxProxy
 
   ---- safe globals for OpenOS compat (M2). Pure or kernel-mediated. ----
-  env.unicode = hostUnicode
+  env.unicode = safeUnicode
 
   function env.checkArg(n, val, ...)
     local exp = table.pack(...)
@@ -2373,8 +2407,8 @@ local function makeEnv(p)
   p.rawIO = ioT
   p.rawOS = osT
   p.env = env
-  initProxies(freax, ioT, osT)
-  setmetatable(env, { __index = sharedEnv })
+  initProxies()
+  setmetatable(env, { __index = sharedEnv, __metatable = false })
   return env
 end
 
@@ -2400,7 +2434,10 @@ function K.spawn(name, path, args, stdio, inh)
       if spec == nil then return nil end
       if type(spec) == "number" then
         local e = fds[spec]
-        if not e then okAll = false return nil end
+        if not e or not inh or e.owner ~= inh.parent then
+          okAll = false
+          return nil
+        end
         if e.pipe then
           local d = dupPipeFd(spec, p.pid)
           return d and kernelNewHandle(d, p) or nil

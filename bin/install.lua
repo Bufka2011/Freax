@@ -31,9 +31,15 @@ local devs = fs.devices()
 -- Source != necessarily boot: user may boot HDD and run installer from floppy.
 local function findInstallerDev()
   if opts.from then
+    local found
     for _, d in ipairs(devs) do
-      if d.addr:sub(1, #opts.from) == opts.from then return d end
+      if d.addr:sub(1, #opts.from) == opts.from then
+        if found then return nil, "ambiguous --from address" end
+        found = d
+      end
     end
+    if not found then return nil, "unknown --from address" end
+    return found
   end
   for _, d in ipairs(devs) do
     if d.mount then
@@ -46,7 +52,8 @@ local function findInstallerDev()
   return nil
 end
 
-local installerDev = findInstallerDev()
+local installerDev, sourceErr = findInstallerDev()
+if sourceErr then term.writeln("install: " .. sourceErr) return end
 local bootDev = nil
 for _, d in ipairs(devs) do if d.boot then bootDev = d break end end
 -- Source is installer media if found, else boot (already-installed system).
@@ -75,9 +82,13 @@ end
 if opts.to then
   local forced = nil
   for _, d in ipairs(devs) do
-    if d.addr:sub(1, #opts.to) == opts.to then forced = d break end
+    if d.addr:sub(1, #opts.to) == opts.to then
+      if forced then term.writeln("install: ambiguous --to address") return end
+      forced = d
+    end
   end
-  if forced then targets = { forced } end
+  if not forced then term.writeln("install: unknown --to address") return end
+  targets = { forced }
 end
 if not srcDev then
   term.writeln("install: cannot find source device")
@@ -141,6 +152,8 @@ local function loadManifest(srcMountPath)
     line = line:match("^%s*(.-)%s*$")
     if line ~= "" and line:sub(1, 1) ~= "#" then
       if line:sub(1, 1) ~= "/" then line = "/" .. line end
+      local canonical = fs.canonical(line)
+      if canonical ~= line or line == "/" then return {} end
       out[#out + 1] = manifestEntry(line)
     end
   end
@@ -237,8 +250,11 @@ for _, e in ipairs(manifest) do
         -- hardware (OpenOS copies in 1-4K chunks for the same reason)
         local ok, werr = true, nil
         while true do
-          local chunk = fs.read(infd, 4096)
-          if not chunk then break end
+          local chunk, rerr = fs.read(infd, 4096)
+          if not chunk then
+            if rerr then ok, werr = nil, rerr end
+            break
+          end
           ok, werr = fs.write(outfd, chunk)
           if not ok then break end
         end
@@ -309,9 +325,9 @@ for _, p in ipairs(need) do
     bad = bad + 1
   end
 end
-if bad > 0 then
+if fails > 0 or bad > 0 then
   term.writeln("install: verification FAILED, refusing set-boot.")
-  term.writeln("install: target " .. tmount .. " is missing boot files.")
+  term.writeln("install: target " .. tmount .. " is incomplete.")
   return
 end
 term.writeln("Verification passed.")

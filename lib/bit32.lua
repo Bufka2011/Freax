@@ -14,9 +14,9 @@ local function norm(n)
   return n % MOD
 end
 
-local function fold2(op, ...)
+local function fold2(op, identity, ...)
   local n = select("#", ...)
-  if n == 0 then return op() end
+  if n == 0 then return identity end
   local acc = norm(select(1, ...))
   for i = 2, n do acc = op(acc, norm(select(i, ...))) end
   return acc
@@ -55,25 +55,33 @@ local function bxor2(a, b)
   return r
 end
 
-function bit32.band(...) return fold2(band2, ...) end
-function bit32.bor(...) return fold2(bor2, ...) end
-function bit32.bxor(...) return fold2(bxor2, ...) end
+function bit32.band(...) return fold2(band2, MOD - 1, ...) end
+function bit32.bor(...) return fold2(bor2, 0, ...) end
+function bit32.bxor(...) return fold2(bxor2, 0, ...) end
 
 function bit32.bnot(a)
   return (MOD - 1) - norm(a)
 end
 
 function bit32.lshift(a, d)
-  return norm(norm(a) * (2 ^ (norm(d) % 32)))
+  d = tonumber(d) or 0
+  if d < 0 then return bit32.rshift(a, -d) end
+  if d >= 32 then return 0 end
+  return norm(norm(a) * (2 ^ d))
 end
 
 function bit32.rshift(a, d)
-  return math.floor(norm(a) / (2 ^ (norm(d) % 32)))
+  d = tonumber(d) or 0
+  if d < 0 then return bit32.lshift(a, -d) end
+  if d >= 32 then return 0 end
+  return math.floor(norm(a) / (2 ^ d))
 end
 
 function bit32.arshift(a, d)
   a = norm(a)
-  d = norm(d) % 32
+  d = tonumber(d) or 0
+  if d < 0 then return bit32.lshift(a, -d) end
+  if d >= 32 then return a >= 2 ^ 31 and MOD - 1 or 0 end
   if d <= 0 then return a end
   if a < 2 ^ 31 then return math.floor(a / (2 ^ d)) end
   -- sign-extend: fill top d bits with 1s
@@ -92,7 +100,7 @@ function bit32.replace(n, v, field, width)
 end
 
 function bit32.btest(...)
-  return fold2(band2, ...) ~= 0
+  return fold2(band2, MOD - 1, ...) ~= 0
 end
 
 return bit32

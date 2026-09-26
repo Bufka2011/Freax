@@ -188,7 +188,7 @@ function sh.expand(value)
     end
     return os.getenv(key) or ''
   end)
-  :gsub("%${(.*)}", function(key)
+  :gsub("%${([^}]*)}", function(key)
     if sh.internal.isIdentifier(key) then
       return os.getenv(key) or ''
     end
@@ -281,9 +281,10 @@ function sh.internal.runBuiltin(name, args, redirects)
     end
   end
 
-  local result = builtin(table.unpack(args))
+  local result = table.pack(pcall(builtin, table.unpack(args)))
   restore()
-  return sh.internal.command_passed(result)
+  if not result[1] then return false, tostring(result[2]) end
+  return sh.internal.command_passed(result[2]), result[3]
 end
 
 function sh.internal.executePipes(pipe_parts, eargs, env)
@@ -366,7 +367,7 @@ function sh.internal.executePipes(pipe_parts, eargs, env)
 
   -- children hold their own dups; closing ours lets downstream readers EOF
   closeOwned(owned)
-  return waitAll(pids) == 0
+  return waitAll(pids)
 end
 
 -------------------------------------------------------------------------------
@@ -497,7 +498,7 @@ function sh.internal.glob(eword)
     for _, path in ipairs(paths) do
       if fs.isDirectory(root .. path) then
         if magical(segment) then
-          for file in (fs.list(root .. path) or {}) do
+          for _, file in ipairs(fs.list(root .. path) or {}) do
             if file:match(enclosed_pattern) and is_visible(file, i) then
               table.insert(next_paths, path .. relative_separator .. file:gsub("/+$", ''))
             end
@@ -753,9 +754,11 @@ function sh.internal.parse_sub(input, quotes)
     end
     table.insert(packed, input:sub(i, fi - 1))
 
-    local sub = io.popen(capture)
-    local result = sub:read("*a")
+    local sub, err = io.popen(capture)
+    if not sub then error(tostring(err or "command substitution failed"), 2) end
+    local result, rerr = sub:read("*a")
     sub:close()
+    if not result then error(tostring(rerr or "command substitution read failed"), 2) end
 
     -- command substitution cuts trailing newlines
     table.insert(packed, (result:gsub("\n+$", "")))

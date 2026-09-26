@@ -48,6 +48,7 @@ end
 -- load unit files from /etc/systemd/*.unit
 local units = {}
 local function loadUnits()
+  units = {}
   local list = fs.list("/etc/systemd") or {}
   for _, name in ipairs(list) do
     local path = "/etc/systemd/" .. name
@@ -59,7 +60,7 @@ local function loadUnits()
         if line ~= "" and line:sub(1,1) ~= "#" and line:sub(1,1) ~= "[" then
           local k, v = line:match("^([^=]+)=(.*)$")
           if k and v then
-            k = k:match("^%s*(.-)%s*$")
+            k = k:match("^%s*(.-)%s*$"):lower()
             v = v:match("^%s*(.-)%s*$")
             u[k] = v
           end
@@ -73,6 +74,7 @@ loadUnits()
 
 -- running services: name -> { pid, status, unit }
 local services = {}
+local starting = {}
 
 local function ensureDir(path)
   local parent = fs.dir(path)
@@ -94,19 +96,22 @@ local function startUnit(name)
   if not u then return nil, "no such unit" end
   local s = services[name]
   if s and s.status == "running" then return true end
+  if starting[name] then return nil, "dependency cycle at " .. name end
+  starting[name] = true
 
-  -- dependencies
+  -- After orders known units. Missing targets are not hard requirements.
   if u.after then
     for dep in u.after:gmatch("[^,]+") do
       dep = dep:match("^%s*(.-)%s*$")
-      if dep ~= "" then
+      if dep ~= "" and units[dep] then
         local ok, err = startUnit(dep)
-        if not ok then return nil, "dependency " .. dep .. ": " .. tostring(err) end
+        if not ok then starting[name] = nil return nil, "dependency " .. dep .. ": " .. tostring(err) end
       end
     end
   end
 
   local pid = freax.spawn(u.name, u.exec, {})
+  starting[name] = nil
   if not pid then return nil, "spawn failed" end
   services[name] = { pid = pid, status = "running", unit = u }
   log(name, "started (pid " .. pid .. ")")
@@ -117,7 +122,8 @@ local function stopUnit(name)
   local s = services[name]
   if not s then return nil, "not loaded" end
   if s.status ~= "running" then return true end
-  freax.kill(s.pid)
+  local ok, err = freax.kill(s.pid)
+  if not ok then return nil, err end
   s.status = "stopped"
   s.pid = nil
   log(name, "stopped")
@@ -125,7 +131,8 @@ local function stopUnit(name)
 end
 
 local function restartUnit(name)
-  stopUnit(name)
+  local ok, err = stopUnit(name)
+  if not ok then return nil, err end
   return startUnit(name)
 end
 
@@ -155,20 +162,24 @@ local function setEnabled(name, on)
 end
 
 -- start enabled units at boot
+local bootStarted = false
 for _, u in pairs(units) do
   if u.enabled == "yes" then
     local ok, err = startUnit(u.name)
+    if ok then bootStarted = true end
     if not ok then log(u.name, "boot start failed: " .. tostring(err)) end
   end
 end
 
-log("systemd", "started (" .. (next(units) and #services .. " services" or "no units") .. ")")
+local serviceCount = 0
+for _ in pairs(services) do serviceCount = serviceCount + 1 end
+log("systemd", "started (" .. serviceCount .. " services)")
 
 -- flush boot-time keystrokes so they don't appear as stray input at the prompt
 while freax.pollEvent() do end
 
 -- fallback: no units enabled -> boot login directly
-if not units or not next(units) then
+if not bootStarted then
   local fallback = { "/bin/login.lua", "/bin/sh.lua" }
   for _, path in ipairs(fallback) do
     local pid = freax.spawn("console", path, {})
@@ -230,6 +241,9 @@ while true do
           lines[#lines + 1] = name .. " not found"
         end
         rsp = table.concat(lines, "\n")
+      elseif action == "reload" and name == "systemd" then
+        loadUnits()
+        rsp = "ok"
       else
         rsp = "unknown action: " .. action
       end

@@ -110,11 +110,16 @@ local function fetchFile(url, path)
 end
 
 local function parseManifest(text)
-  local out = {}
+  local out, seen = {}, {}
   for line in (tostring(text or "") .. "\n"):gmatch("(.-)\n") do
     line = trim(line)
     if line ~= "" and line:sub(1, 1) ~= "#" then
       if line:sub(1, 1) ~= "/" then line = "/" .. line end
+      local canonical = fs.canonical(line)
+      if canonical ~= line or line == "/" or seen[line] then
+        return nil, "unsafe or duplicate manifest path: " .. line
+      end
+      seen[line] = true
       out[#out + 1] = line
     end
   end
@@ -157,7 +162,8 @@ if not man then
   io.stderr:write("failed: " .. tostring(merr) .. "\n")
   return 1
 end
-local files = parseManifest(man)
+local files, manifestErr = parseManifest(man)
+if not files then io.stderr:write("failed: " .. tostring(manifestErr) .. "\n") return 1 end
 io.write(#files .. " files.\n")
 
 local ver = fetchText(source .. "VERSION")
@@ -186,13 +192,17 @@ end
 
 local target
 if opts.to then
+  local matches = 0
   for _, t in ipairs(targets) do
-    if matchesTo(t.addr) then target = t break end
+    if matchesTo(t.addr) then target, matches = t, matches + 1 end
   end
+  if matches > 1 then io.stderr:write("webinstall: ambiguous target address\n") return 1 end
   if not target then
     -- maybe the component exists but was not auto-mounted
     for addr in pairs(comps) do
       if matchesTo(addr) then
+        matches = matches + 1
+        if matches > 1 then io.stderr:write("webinstall: ambiguous target address\n") return 1 end
         local path = "/mnt/" .. addr:sub(1, 8)
         if not fs.exists(path) then fs.makeDirectory(path) end
         if fs.mount(addr, path) then

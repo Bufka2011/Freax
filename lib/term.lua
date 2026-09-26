@@ -54,6 +54,7 @@ function term.read(history, dobreak, hint, pwchar, filter)
   end
   while true do
     local line = freax.ttyReadLine(pwchar, history)
+    if line == nil then return nil end
     if type(f) ~= "function" or f(line) then return line end
     pcall(freax.beep, 2000, 0.1)
   end
@@ -88,9 +89,10 @@ term.internal = {}
 function term.internal.run_in_window(window, func, ...)
   local prev = term.window
   term.window = window
-  local ret = table.pack(func(...))
+  local ret = table.pack(pcall(func, ...))
   term.window = prev
-  return table.unpack(ret, 1, ret.n)
+  if not ret[1] then error(ret[2], 0) end
+  return table.unpack(ret, 2, ret.n)
 end
 
 function term.setCursorBlink(e) blink = not not e freax.ttySetBlink(blink) end

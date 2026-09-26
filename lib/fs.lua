@@ -78,11 +78,14 @@ function fs.readFile(path)
   if not fd then return nil, err end
   local parts = {}
   while true do
-    local chunk = fs.read(fd, 4096)
-    if not chunk then break end
+    local chunk, rerr = fs.read(fd, 4096)
+    if not chunk then
+      fs.close(fd)
+      if rerr then return nil, rerr end
+      break
+    end
     parts[#parts + 1] = chunk
   end
-  fs.close(fd)
   return table.concat(parts)
 end
 
@@ -101,8 +104,11 @@ function fs.copy(src, dst)
   local outfd, err2 = fs.open(dst, "w")
   if not outfd then fs.close(infd) return nil, err2 end
   while true do
-    local chunk = fs.read(infd, 4096)
-    if not chunk then break end
+    local chunk, rerr = fs.read(infd, 4096)
+    if not chunk then
+      if rerr then fs.close(infd) fs.close(outfd) return nil, rerr end
+      break
+    end
     local ok, werr = fs.write(outfd, chunk)
     if not ok then fs.close(infd) fs.close(outfd) return nil, werr end
   end

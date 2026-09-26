@@ -52,7 +52,12 @@ function io.lines(filename, ...)
   if filename then
     local file, err = io.open(filename, "r")
     if not file then error(err, 2) end
-    return file:lines(...)
+    local iter = file:lines(...)
+    return function()
+      local values = table.pack(iter())
+      if values[1] == nil then file:close() end
+      return table.unpack(values, 1, values.n)
+    end
   end
   return current_input:lines(...)
 end

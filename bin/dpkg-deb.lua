@@ -104,7 +104,8 @@ end
 local function contents(pkg)
   local reader, err = fpkg.open(pkg)
   if not reader then return nil, err end
-  reader:loadScripts()
+  local scripts, scriptErr = reader:loadScripts()
+  if not scripts then reader:close() return nil, scriptErr end
   while true do
     local entry, nerr = reader:next()
     if not entry then
@@ -119,7 +120,8 @@ local function contents(pkg)
     else
       io.write("f " .. entry.size .. "  " .. entry.path .. "\n")
     end
-    reader:skip()
+    local ok, skipErr = reader:skip()
+    if not ok then reader:close() return nil, skipErr end
   end
   return true
 end
@@ -128,7 +130,8 @@ local function info(pkg)
   local reader, err = fpkg.open(pkg)
   if not reader then return nil, err end
   io.write(fpkg.serializeControl(reader.fields, reader.order))
-  local scripts = reader:loadScripts() or {}
+  local scripts, scriptErr = reader:loadScripts()
+  if not scripts then reader:close() return nil, scriptErr end
   reader:close()
   for _, name in ipairs(SCRIPT_NAMES) do
     if scripts[name] then io.write(name .. " (lua)\n") end
@@ -139,7 +142,25 @@ end
 local function extractData(pkg, dir)
   local reader, err = fpkg.open(pkg)
   if not reader then return nil, err end
-  reader:loadScripts()
+  local scripts, scriptErr = reader:loadScripts()
+  if not scripts then reader:close() return nil, scriptErr end
+  local okRoot, rootErr = fpkg.ensureDir(fs.resolve(dir))
+  if not okRoot then reader:close() return nil, rootErr end
+  local root = fs.realPath(dir) or fs.resolve(dir)
+  local function safeTarget(path)
+    local target = fs.canonical(root .. path)
+    if root ~= "/" and target:sub(1, #root + 1) ~= root .. "/" then
+      return nil, "unsafe entry path: " .. path
+    end
+    local parent = fs.dir(target)
+    local cur = root
+    local rel = root == "/" and parent:sub(2) or parent:sub(#root + 2)
+    for seg in rel:gmatch("[^/]+") do
+      cur = fs.concat(cur, seg)
+      if fs.isLink(cur) then return nil, "symlink parent in extraction path: " .. cur end
+    end
+    return target
+  end
   while true do
     local entry, nerr = reader:next()
     if not entry then
@@ -147,21 +168,30 @@ local function extractData(pkg, dir)
       if nerr then return nil, nerr end
       break
     end
-    local target = dir .. entry.path
+    local target, targetErr = safeTarget(entry.path)
+    if not target then reader:close() return nil, targetErr end
     if entry.type == "d" then
-      fpkg.ensureDir(target)
+      local ok, derr = fpkg.ensureDir(target)
+      if not ok then reader:close() return nil, derr end
     elseif entry.type == "l" then
-      fpkg.ensureDir(fs.dir(target))
+      local ok, derr = fpkg.ensureDir(fs.dir(target))
+      if not ok then reader:close() return nil, derr end
       if fs.exists(target) or fs.isLink(target) then fs.remove(target) end
-      fs.link(entry.target, target)
+      local lok, lerr = fs.link(entry.target, target)
+      if not lok then reader:close() return nil, lerr end
     else
-      fpkg.ensureDir(fs.dir(target))
+      local ok, derr = fpkg.ensureDir(fs.dir(target))
+      if not ok then reader:close() return nil, derr end
       local fd, ferr = fs.open(target, "w")
       if not fd then reader:close() return nil, ferr end
       while true do
-        local chunk = reader:readData(4096)
-        if not chunk then break end
-        fs.write(fd, chunk)
+        local chunk, rerr = reader:readData(4096)
+        if not chunk then
+          if rerr then fs.close(fd) reader:close() return nil, rerr end
+          break
+        end
+        local wok, werr = fs.write(fd, chunk)
+        if not wok then fs.close(fd) reader:close() return nil, werr end
       end
       fs.close(fd)
     end
@@ -176,7 +206,8 @@ local function extractControl(pkg, dir)
   local ok, werr = fs.writeFile(dir .. "/control",
     fpkg.serializeControl(reader.fields, reader.order))
   if not ok then reader:close() return nil, werr end
-  local scripts = reader:loadScripts() or {}
+  local scripts, scriptErr = reader:loadScripts()
+  if not scripts then reader:close() return nil, scriptErr end
   reader:close()
   for _, name in ipairs(SCRIPT_NAMES) do
     if scripts[name] then

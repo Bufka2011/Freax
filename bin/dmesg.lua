@@ -30,7 +30,7 @@ pcall(function()
     if interactive then term.gpu().setForeground(0x44CC00) end
     io.write(tostring(evt[1]) .. string.rep(" ", math.max(10 - #tostring(evt[1]), 0) + 1))
     if interactive then term.gpu().setForeground(0xB0B00F) end
-    io.write(tostring(evt[2]) .. string.rep(" ", 37 - #tostring(evt[2])))
+    io.write(tostring(evt[2]) .. string.rep(" ", math.max(37 - #tostring(evt[2]), 0)))
     if interactive then term.gpu().setForeground(0xFFFFFF) end
     if evt.n > 2 then
       for i = 3, evt.n do

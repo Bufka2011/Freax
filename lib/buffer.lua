@@ -232,18 +232,23 @@ function buffer:buffered_write(self, arg)
 end
 
 function buffer:formatted_read(readChunk, ...)
+  self.timeout = computer.uptime() + self.readTimeout
   local results = {}
   local formats = table.pack(...)
   for i = 1, formats.n do
     local fmt = formats[i]
     if type(fmt) == "number" then
-      local data, err = readChunk(self)
-      if data then
-        results[i] = self.bufferRead:sub(1, fmt)
-        self.bufferRead = self.bufferRead:sub(fmt + 1)
-      else
-        results[i] = data
+      while #self.bufferRead < fmt do
+        local data, err = readChunk(self)
+        if not data then
+          if err and #self.bufferRead == 0 then return nil, err end
+          break
+        end
       end
+      if fmt == 0 then results[i] = ""
+      elseif #self.bufferRead > 0 then results[i] = self.bufferRead:sub(1, fmt)
+      else results[i] = nil end
+      self.bufferRead = self.bufferRead:sub(fmt + 1)
     elseif fmt == "*a" or fmt == "*all" then
       local data, err = self:readAll()
       if data then

@@ -42,9 +42,11 @@ if filename == "" then
 end
 filename = shell.resolve(filename)
 
-local preexisted
-if fs.exists(filename) then
-  preexisted = true
+if fs.isDirectory(filename) then
+  return nil, "target is a directory"
+end
+local preexisted = fs.exists(filename)
+if preexisted then
   if not options.f then
     if not options.Q then
       io.stderr:write("file already exists")
@@ -53,16 +55,17 @@ if fs.exists(filename) then
   end
 end
 
-local f, reason = io.open(filename, "a")
+local tmp = filename .. ".wget-new"
+local backup = filename .. ".wget-old"
+if fs.exists(tmp) or fs.isLink(tmp) then return nil, "temporary path already exists: " .. tmp end
+if fs.exists(backup) or fs.isLink(backup) then return nil, "backup path already exists: " .. backup end
+local f, reason = io.open(tmp, "wb")
 if not f then
   if not options.Q then
     io.stderr:write("failed opening file for writing: " .. reason)
   end
   return nil, "failed opening file for writing: " .. reason
 end
-f:close()
-f = nil
-
 if not options.q then
   io.write("Downloading... ")
 end
@@ -70,23 +73,17 @@ local result, response = pcall(internet.request, url, nil, {["user-agent"]="Wget
 if result then
   local result, reason = pcall(function()
     for chunk in response do
-      if not f then
-        f, reason = io.open(filename, "wb")
-        assert(f, "failed opening file for writing: " .. tostring(reason))
-      end
-      f:write(chunk)
+      local ok, werr = f:write(chunk)
+      assert(ok, tostring(werr or "write failed"))
     end
   end)
   if not result then
     if not options.q then
       io.stderr:write("failed.\n")
     end
-    if f then
-      f:close()
-      if not preexisted then
-        fs.remove(filename)
-      end
-    end
+    response.close()
+    f:close()
+    fs.remove(tmp)
     if not options.Q then
       io.stderr:write("HTTP request failed: " .. reason .. "\n")
     end
@@ -96,14 +93,31 @@ if result then
     io.write("success.\n")
   end
 
-  if f then
-    f:close()
+  response.close()
+  f:close()
+  if preexisted then
+    local preserved, perr = fs.rename(filename, backup)
+    if not preserved then
+      fs.remove(tmp)
+      if not options.Q then io.stderr:write("failed preserving target: " .. tostring(perr) .. "\n") end
+      return nil, perr
+    end
   end
+  local renamed, rerr = fs.rename(tmp, filename)
+  if not renamed then
+    fs.remove(tmp)
+    if preexisted then fs.rename(backup, filename) end
+    if not options.Q then io.stderr:write("failed replacing target: " .. tostring(rerr) .. "\n") end
+    return nil, rerr
+  end
+  if preexisted then fs.remove(backup) end
 
   if not options.q then
     io.write("Saved data to " .. filename .. "\n")
   end
 else
+  f:close()
+  fs.remove(tmp)
   if not options.q then
     io.write("failed.\n")
   end

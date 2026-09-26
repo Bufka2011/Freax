@@ -124,15 +124,23 @@ function dpkg.saveStatus(db)
   local tmp = dpkg.statusPath .. ".dpkg-new"
   local ok, err = fs.writeFile(tmp, text)
   if not ok then return nil, err end
+  local backup = dpkg.statusPath .. ".dpkg-old"
+  if fs.exists(backup) or fs.isLink(backup) then
+    fs.remove(tmp)
+    return nil, "status backup already exists: " .. backup
+  end
+  local hadOld = fs.exists(dpkg.statusPath)
+  if hadOld then
+    local bok, berr = fs.rename(dpkg.statusPath, backup)
+    if not bok then fs.remove(tmp) return nil, berr end
+  end
   local rok, rerr = fs.rename(tmp, dpkg.statusPath)
   if not rok then
-    if fs.exists(dpkg.statusPath) then fs.remove(dpkg.statusPath) end
-    rok, rerr = fs.rename(tmp, dpkg.statusPath)
-  end
-  if not rok then
     fs.remove(tmp)
+    if hadOld then fs.rename(backup, dpkg.statusPath) end
     return nil, rerr
   end
+  if hadOld then fs.remove(backup) end
   return true
 end
 
@@ -282,7 +290,8 @@ function dpkg.inspect(path)
   local reader, err = fpkg.open(path)
   if not reader then return nil, err end
   local fields = reader.fields
-  local scripts = reader:loadScripts() or {}
+  local scripts, scriptErr = reader:loadScripts()
+  if not scripts then reader:close() return nil, scriptErr end
   local conffiles = {}
   while true do
     local entry, nerr = reader:next()
@@ -291,7 +300,8 @@ function dpkg.inspect(path)
       break
     end
     if entry.type == "c" then conffiles[#conffiles + 1] = entry.path end
-    reader:skip()
+    local ok, skipErr = reader:skip()
+    if not ok then reader:close() return nil, skipErr end
   end
   reader:close()
   return { fields = fields, scripts = scripts, conffiles = conffiles }
@@ -313,20 +323,26 @@ local function dirIsEmpty(path)
 end
 
 local function replaceFile(tmp, target)
-  if fs.isLink(target) then
-    fs.remove(target)
-  elseif fs.isDirectory(target) then
+  if fs.isDirectory(target) and not fs.isLink(target) then
     if not dirIsEmpty(target) then
       return nil, "refusing to replace non-empty directory " .. target
     end
-    fs.remove(target)
+  end
+  local backup = target .. ".dpkg-old"
+  if fs.exists(backup) or fs.isLink(backup) then
+    return nil, "backup path already exists: " .. backup
+  end
+  local hadOld = fs.exists(target) or fs.isLink(target)
+  if hadOld then
+    local bok, berr = fs.rename(target, backup)
+    if not bok then return nil, berr or ("cannot preserve " .. target) end
   end
   local ok, err = fs.rename(tmp, target)
   if not ok then
-    if fs.exists(target) or fs.isLink(target) then fs.remove(target) end
-    ok, err = fs.rename(tmp, target)
+    if hadOld then fs.rename(backup, target) end
+    return nil, err or ("cannot install " .. target)
   end
-  if not ok then return nil, err or ("cannot install " .. target) end
+  if hadOld then fs.remove(backup) end
   return true
 end
 
@@ -359,11 +375,16 @@ function dpkg.unpack(fpkgPath, opts)
   local fields, order = reader.fields, reader.order
   local name = fields and fields.Package
   if not name then reader:close() return done(nil, "package has no Package field") end
+  if not fpkg.validPackageName(name) then
+    reader:close()
+    return done(nil, "invalid package name: " .. tostring(name))
+  end
   local old = dpkg.getStanza(name)
   local oldver = old and old.Version
   local prev = old and dpkg.pkgStatus(name) or "not-installed"
   local isUpgrade = prev ~= "not-installed" and prev ~= "config-files"
-  local scripts = reader:loadScripts() or {}
+  local scripts, scriptErr = reader:loadScripts()
+  if not scripts then reader:close() return done(nil, scriptErr) end
   if scripts.preinst then
     local sok, serr = runSource(scripts.preinst, name .. ".preinst",
       isUpgrade and "upgrade" or "install", oldver)
@@ -400,8 +421,11 @@ function dpkg.unpack(fpkgPath, opts)
         local fd, ferr = fs.open(tmp, "w")
         if not fd then error(ferr or ("cannot write " .. tmp)) end
         while true do
-          local chunk = reader:readData(4096)
-          if not chunk then break end
+          local chunk, rerr = reader:readData(4096)
+          if not chunk then
+            if rerr then fs.close(fd) error(rerr) end
+            break
+          end
           h:update(chunk)
           local wok, werr = fs.write(fd, chunk)
           if not wok then fs.close(fd) error(werr or "write failed") end
@@ -420,6 +444,8 @@ function dpkg.unpack(fpkgPath, opts)
           if not keep then
             local rok, rerr = replaceFile(tmp, entry.path)
             if not rok then error(rerr) end
+          else
+            fs.remove(tmp)
           end
         else
           local rok, rerr = replaceFile(tmp, entry.path)

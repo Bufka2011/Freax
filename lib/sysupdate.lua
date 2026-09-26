@@ -144,11 +144,15 @@ local function fetchToFile(url, tmp)
 end
 
 local function parseManifest(data)
-  local out = {}
+  local out, seen = {}, {}
   for line in (tostring(data or "") .. "\n"):gmatch("(.-)\n") do
     line = trim(line)
     if line ~= "" and line:sub(1, 1) ~= "#" then
       if line:sub(1, 1) ~= "/" then line = "/" .. line end
+      if line == "/" or fs.canonical(line) ~= line or seen[line] then
+        return nil, "unsafe or duplicate manifest path: " .. line
+      end
+      seen[line] = true
       out[#out + 1] = line
     end
   end
@@ -164,7 +168,9 @@ local function parseSums(text)
     if hex and path then
       path = trim(path)
       if path:sub(1, 1) ~= "/" then path = "/" .. path end
-      out[path] = hex:lower()
+      if #hex == 64 and path ~= "/" and fs.canonical(path) == path then
+        out[path] = hex:lower()
+      end
     end
   end
   return out
@@ -215,6 +221,7 @@ end
 function sysupdate.update(opts)
   if not needNet() then return 1 end
   local src = sysupdate.effectiveSource(opts)
+  fs.remove(CACHE_CHANGED)
   io.write("Source: " .. src .. "\n")
   io.write("Checking version... ")
   local body, err = fetchText(src .. "VERSION")
@@ -254,7 +261,11 @@ function sysupdate.update(opts)
     io.write("unavailable (" .. tostring(sumsErr) .. ").\n")
   end
   sums = validSums(body, sums)
-  local files = parseManifest(man)
+  local files, parseErr = parseManifest(man)
+  if not files then
+    io.stderr:write("apt: " .. tostring(parseErr) .. "\n")
+    return 1
+  end
   local n = #files
   local changed = n
   local changedList = nil
@@ -273,7 +284,7 @@ function sysupdate.update(opts)
         local want = sums[dst]
         local differs
         if haveLocal then
-          differs = lsums[dst] ~= want
+          differs = not fs.exists(dst) or lsums[dst] ~= want
         else
           differs = (not want) or (sha256File(dst) ~= want)
         end
@@ -322,15 +333,17 @@ function sysupdate.upgrade(opts)
     man = fresh
     io.write("ok.\n")
   end
-  local remote = "unknown"
+  local remote, versionBody = "unknown", nil
   local cached = fs.readFile(CACHE_VERSION)
   if cached and cached:match("%S+") then
+    versionBody = cached
     remote = cached:match("%S+")
   else
     local body = fetchText(src .. "VERSION")
-    if body and body:match("%S+") then remote = body:match("%S+") end
+    if body and body:match("%S+") then versionBody, remote = body, body:match("%S+") end
   end
-  local files = parseManifest(man)
+  local files, parseErr = parseManifest(man)
+  if not files then io.stderr:write("apt: " .. tostring(parseErr) .. "\n") return 1 end
   -- Remote checksums (cached by `apt sysupdate`, else fetched now).
   local sumsRaw = fs.readFile(CACHE_SUMS)
   local sums = parseSums(sumsRaw)
@@ -343,7 +356,7 @@ function sysupdate.upgrade(opts)
       if next(sums) == nil then sums = nil end
     end
   end
-  sums = validSums(fetchText(src .. "VERSION"), sums)
+  sums = validSums(versionBody, sums)
   -- Local /SHA256SUMS: installed-file hashes, so skipping is a table
   -- compare instead of re-hashing every file.
   local lsums = parseSums(fs.readFile("/SHA256SUMS"))
@@ -358,7 +371,7 @@ function sysupdate.upgrade(opts)
         line = trim(line)
         if line ~= "" then
           if line:sub(1, 1) ~= "/" then line = "/" .. line end
-          changedSet[line] = true
+          if fs.canonical(line) == line then changedSet[line] = true end
         end
       end
     end
@@ -381,7 +394,7 @@ function sysupdate.upgrade(opts)
     for _, dst in ipairs(files) do
       if not (SKIP_DEV[dst] or PRESERVE[dst]) and dst ~= "/SHA256SUMS"
         and not (dst == "/etc/apt/sources.list" and fs.exists(dst))
-        and lsums[dst] ~= (sums and sums[dst]) then
+        and (not fs.exists(dst) or lsums[dst] ~= (sums and sums[dst])) then
         toFetch = toFetch + 1
       end
     end
@@ -414,7 +427,7 @@ function sysupdate.upgrade(opts)
       if changedSet then
         needs = changedSet[dst] and true or false
       elseif haveLocal then
-        needs = lsums[dst] ~= want
+        needs = not fs.exists(dst) or lsums[dst] ~= want
       elseif want then
         needs = sha256File(dst) ~= want
       else

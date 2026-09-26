@@ -24,7 +24,7 @@ local function confirm(msg)
 end
 
 local function removeRec(path, rel)
-  if not fs.exists(path) then
+  if not fs.exists(path) and not fs.isLink(path) then
     if not bForce then
       io.stderr:write("rm: cannot remove '" .. rel .. "': No such file or directory\n")
       ec = 1

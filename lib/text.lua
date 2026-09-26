@@ -152,6 +152,9 @@ function text.internal.words(input, options)
   if qr then
     return nil, "unclosed quote at index " .. start
   end
+  if escaped then
+    return nil, "trailing escape"
+  end
 
   if #token > 0 then
     table.insert(tokens, token)
@@ -188,10 +191,10 @@ function text.split(input, delimiters, dropDelims, di)
     for _, delim in ipairs(delimiters) do
       local dlen = #delim
       if input:sub(i, i + dlen - 1) == delim then
-        if not dropDelims then
+        if #current > 0 then
           table.insert(result, current)
         end
-        if dropDelims then
+        if not dropDelims then
           table.insert(result, delim)
         end
         current = ""
@@ -205,12 +208,10 @@ function text.split(input, delimiters, dropDelims, di)
       i = i + 1
     end
   end
-  if #result == 0 then
-    return {input}
-  end
   if #current > 0 then
     table.insert(result, current)
   end
+  if #result == 0 and input ~= "" and not dropDelims then return {input} end
   return result
 end
 

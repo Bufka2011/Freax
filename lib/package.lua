@@ -87,6 +87,7 @@ require = function(module)
     if not library then
       error("module '" .. module .. "' load failed:\n" .. tostring(status))
     end
+    if status == nil then status = true end
     loaded[module] = status
     return status
   end

@@ -10,6 +10,15 @@ local fpkg = {}
 
 fpkg.VERSION = 1
 
+function fpkg.validPackageName(name)
+  return type(name) == "string" and name:match("^[a-z0-9][a-z0-9+%.%-]*$") ~= nil
+end
+
+function fpkg.validEntryPath(path)
+  return type(path) == "string" and path:sub(1, 1) == "/"
+    and path ~= "/" and fs.canonical(path) == path
+end
+
 local SCRIPT_NAMES = { preinst = true, postinst = true, prerm = true, postrm = true }
 
 function fpkg.arch() return "all" end
@@ -203,11 +212,11 @@ function Reader:readLine()
       self.buf = buf:sub(nl + 1)
       return buf:sub(1, nl - 1)
     end
-    local chunk = fs.read(self.fd, 4096)
+    local chunk, err = fs.read(self.fd, 4096)
     if not chunk or chunk == "" then
       self.buf = ""
       if #buf > 0 then return buf end
-      return nil
+      return nil, err
     end
     buf = buf .. chunk
     if #buf > 1048576 then return nil, "header too long" end
@@ -217,11 +226,22 @@ end
 function Reader:readHeader()
   while true do
     local line, err = self:readLine()
-    if not line then return nil, err end
+    if not line then return nil, err or "truncated archive: missing @end" end
     if line ~= "" then
       local typ, len, path = line:match("^@entry%s+(%a+)%s+(%d+)%s+(.*)$")
-      if typ then return typ, tonumber(len), path end
-      if line:match("^@end%s*$") then return nil end
+      if typ then
+        if typ ~= "control" and typ ~= "d" and typ ~= "f" and typ ~= "c" and typ ~= "l" then
+          return nil, "bad entry type: " .. typ
+        end
+        if typ ~= "control" then
+          if not fpkg.validEntryPath(path) then return nil, "unsafe entry path: " .. tostring(path) end
+          self.seen = self.seen or {}
+          if self.seen[path] then return nil, "duplicate entry path: " .. path end
+          self.seen[path] = true
+        end
+        return typ, tonumber(len), path
+      end
+      if line:match("^@end%s*$") then self.ended = true return nil end
       return nil, "bad entry header: " .. line
     end
   end
@@ -236,8 +256,11 @@ function Reader:readPayload(n)
     got = take
   end
   while got < n do
-    local chunk = fs.read(self.fd, math.min(4096, n - got))
-    if not chunk or chunk == "" then break end
+    local chunk, err = fs.read(self.fd, math.min(4096, n - got))
+    if not chunk or chunk == "" then
+      if err then return nil, err end
+      break
+    end
     local want = n - got
     if #chunk > want then
       parts[#parts + 1] = chunk:sub(1, want)
@@ -262,6 +285,7 @@ function Reader:loadScripts()
       break
     end
     if typ == "control" and path ~= "control" and path:sub(1, 1) ~= "/" then
+      if not SCRIPT_NAMES[path] then return nil, "unknown control entry: " .. path end
       local src, err = self:readPayload(len)
       if not src then return nil, err end
       self.scripts[path] = src
@@ -278,7 +302,12 @@ function Reader:next()
     local _, err = self:loadScripts()
     if err then return nil, err end
   end
-  if self.entry and self.entry.remaining > 0 then self:skip() end
+  if self.entry and self.entry.remaining > 0 then
+    local ok, err = self:skip()
+    if not ok then return nil, err end
+  end
+  if self.entry and self.entry.remaining > 0 then return nil, "truncated payload" end
+  if self.ended and not self.pending then return nil end
   local typ, len, path
   if self.pending then
     typ, len, path = self.pending.type, self.pending.size, self.pending.path
@@ -292,6 +321,7 @@ function Reader:next()
     typ, len, path = t, l, p
   end
   while typ == "control" and path:sub(1, 1) ~= "/" do
+    if not SCRIPT_NAMES[path] then return nil, "unknown control entry: " .. path end
     local src, err = self:readPayload(len)
     if not src then return nil, err end
     self.scripts[path] = src
@@ -327,8 +357,11 @@ function Reader:readData(max)
     got = take
   end
   while got < want do
-    local chunk = fs.read(self.fd, math.min(4096, want - got))
-    if not chunk or chunk == "" then break end
+    local chunk, err = fs.read(self.fd, math.min(4096, want - got))
+    if not chunk or chunk == "" then
+      if err then return nil, err end
+      break
+    end
     local room = want - got
     if #chunk > room then
       parts[#parts + 1] = chunk:sub(1, room)
@@ -340,7 +373,7 @@ function Reader:readData(max)
     end
   end
   entry.remaining = entry.remaining - got
-  if got == 0 then return nil end
+  if got == 0 then return nil, "truncated payload" end
   return table.concat(parts)
 end
 
@@ -348,7 +381,8 @@ function Reader:skip()
   local entry = self.entry
   if not entry then return true end
   while entry.remaining > 0 do
-    if not self:readData(4096) then break end
+    local chunk, err = self:readData(4096)
+    if not chunk then return nil, err or "truncated payload" end
   end
   return true
 end
@@ -365,7 +399,7 @@ function fpkg.open(path)
   local fd, err = fs.open(path, "r")
   if not fd then return nil, err end
   local self = setmetatable({
-    fd = fd, buf = "", scripts = {}, scriptsLoaded = false,
+    fd = fd, buf = "", scripts = {}, scriptsLoaded = false, seen = {},
   }, Reader)
   local magic = self:readLine()
   if not magic then self:close() return nil, "empty package" end

@@ -16,7 +16,8 @@ layout.
   without yielding. That error unwinds through ONE coroutine - the hog
   dies, the kernel lives.
 - **Shell**: bash-ish - pipes `|`, redirects `> >> < 2>` `2>&1`,
-  chaining `; && ||`, vars `$VAR`, aliases, source, job control.
+  chaining `; && ||`, vars `$VAR`, aliases, source, foreground wait/kill
+  (no background `&` job control yet).
 
 ## Status
 

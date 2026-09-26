@@ -67,22 +67,23 @@ function auth.getShadow(user)
         return { salt = "", hash = "" }
       end
       local salt, hash = rest:match("^%$(.-)%$(.+)$")
-      if salt then
+      if salt and salt ~= "" and hash:match("^%x+$") and #hash == 64 then
         return { salt = salt, hash = hash }
       end
-      return { salt = "", hash = "" } -- unparseable: treat as unset
+      return nil, "malformed shadow entry"
     end
   end
   return nil
 end
 
--- nil ok + message. Empty/missing hash = no password set.
+-- Only an explicit empty shadow entry means no password.
 function auth.verify(user, password)
   if not auth.getPasswd(user) then
     return nil, "unknown user"
   end
-  local sh = auth.getShadow(user)
-  if not sh or (sh.salt == "" and sh.hash == "") then
+  local sh, err = auth.getShadow(user)
+  if not sh then return nil, err or "missing shadow entry" end
+  if sh.salt == "" and sh.hash == "" then
     return true
   end
   if auth.hash(password or "", sh.salt) == sh.hash then
@@ -110,8 +111,10 @@ function auth.setShadow(user, salt, hash)
   end
   local fd, err = fs.open("/etc/shadow", "w")
   if not fd then return nil, err end
-  fs.write(fd, table.concat(out, "\n") .. "\n")
-  fs.close(fd)
+  local ok, err = fs.write(fd, table.concat(out, "\n") .. "\n")
+  local cok, cerr = fs.close(fd)
+  if not ok then return nil, err end
+  if cok == nil then return nil, cerr end
   return true
 end
 

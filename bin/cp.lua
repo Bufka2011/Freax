@@ -50,7 +50,8 @@ local function mountOf(path)
   local best, bestLen
   for _, d in ipairs(fs.devices() or {}) do
     local m = d.mount
-    if m and path:sub(1, #m) == m and (not bestLen or #m > bestLen) then
+    if m and (m == "/" or path == m or path:sub(1, #m + 1) == m .. "/")
+      and (not bestLen or #m > bestLen) then
       best, bestLen = m, #m
     end
   end
@@ -74,6 +75,11 @@ local function sameFile(a, b)
   return same
 end
 
+local visiting = {}
+local function identity(path)
+  return fs.realPath(path) or shell.resolve(path)
+end
+
 local function copyRec(src, dst, top, srcMount)
   if skipped(shell.resolve(src)) then
     if bVerbose then io.write("skipping " .. src .. "\n") end
@@ -92,12 +98,16 @@ local function copyRec(src, dst, top, srcMount)
   if fs.isDirectory(src) then
     if not bRec then return nil, "omitting directory (use -r)" end
     if bOneFS and not top and mountOf(src) ~= srcMount then return true end
+    local real = identity(src)
+    if visiting[real] then return nil, "symbolic link directory cycle" end
+    visiting[real] = true
     if not fs.exists(dst) then fs.makeDirectory(dst) end
     for _, n in ipairs(fs.list(src) or {}) do
       local name = n:gsub("/$", "")
       local ok, err = copyRec(fs.concat(src, name), fs.concat(dst, name), false, srcMount)
-      if not ok then return nil, err end
+      if not ok then visiting[real] = nil return nil, err end
     end
+    visiting[real] = nil
     return true
   end
 
@@ -124,7 +134,16 @@ for _, sRaw in ipairs(args) do
   else
     local target = dst
     if dstIsDir then target = fs.concat(dst, fs.name(src) or sRaw) end
-    local ok, err = copyRec(src, target, true, mountOf(src))
+    local srcId, targetId = identity(src), identity(target)
+    local inside = fs.isDirectory(src) and targetId:sub(1, #srcId + 1) == srcId .. "/"
+    local ok, err
+    if srcId == targetId then
+      ok, err = nil, "source and destination are the same file"
+    elseif inside then
+      ok, err = nil, "cannot copy a directory into itself"
+    else
+      ok, err = copyRec(src, target, true, mountOf(src))
+    end
     if not ok then ec = 1; io.stderr:write("cp: " .. sRaw .. ": " .. tostring(err) .. "\n") end
   end
 end

@@ -18,7 +18,12 @@ local function deviceMap(filter)
 end
 
 function component.list(filter)
-  return deviceMap(filter)
+  local map = deviceMap(filter)
+  return setmetatable(map, {
+    __call = function(t, _, key)
+      return next(t, key)
+    end,
+  })
 end
 
 function component.isAvailable(typ)
