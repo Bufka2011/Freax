@@ -321,15 +321,24 @@ end
 
 function api.proxy.list(path)
   local result = {}
-  for name in pairs(dynamic_list(path, false)) do
-    table.insert(result, name)
+  -- dynamic_list returns nodes, links and directories separately; passing it
+  -- straight into pairs() only ever saw the first table
+  local nodes, links, dirs = dynamic_list(path, false)
+  for name in pairs(nodes) do result[#result + 1] = name end
+  for name in pairs(links) do result[#result + 1] = name end
+  for name in pairs(dirs) do
+    if not links[name] then result[#result + 1] = name .. "/" end
   end
+  table.sort(result)
   return result
 end
 
 function api.proxy.isDirectory(path)
   local node = findNode(path)
-  return node and node.proxy and node.proxy.list
+  if not node then return false end
+  -- a node is a directory when it has children, or its proxy can list
+  if next(node.children or {}) then return true end
+  return not not (node.proxy and node.proxy.list)
 end
 
 function api.proxy.size(path)

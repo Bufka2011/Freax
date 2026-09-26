@@ -192,8 +192,10 @@ function sh.expand(value)
     if sh.internal.isIdentifier(key) then
       return os.getenv(key) or ''
     end
+    -- Never exit here: this runs inside the shell's own process, so os.exit
+    -- would kill the interactive shell (it looked like a shell restart).
     io.stderr:write("${" .. key .. "}: bad substitution\n")
-    os.exit(1)
+    return "${" .. key .. "}"
   end)
   return expanded
 end

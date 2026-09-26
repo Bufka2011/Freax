@@ -2787,9 +2787,16 @@ local function mountDevfs()
   currentP = p0
   local ok, err = pcall(function()
     local devfs = env.require("devfs")
-    if type(devfs) ~= "table" or type(devfs.api) ~= "table"
-      or type(devfs.api.proxy) ~= "table" then
-      error("missing api.proxy")
+    -- lib/devfs.lua returns the api table itself, so the filesystem proxy
+    -- lives at devfs.proxy. The old devfs.api.proxy check never matched, so
+    -- /dev silently never mounted in any earlier release.
+    local devfsProxy = type(devfs) == "table" and devfs.proxy or nil
+    if type(devfsProxy) ~= "table" and type(devfs) == "table"
+      and type(devfs.api) == "table" then
+      devfsProxy = devfs.api.proxy
+    end
+    if type(devfsProxy) ~= "table" then
+      error("devfs module exposes no proxy")
     end
     -- create /dev on the underlying root if it isn't there yet
     pcall(function()
@@ -2799,7 +2806,7 @@ local function mountDevfs()
         proxy.makeDirectory(rest)
       end
     end)
-    vfsMount(devfs.api.proxy, "/dev", nil)
+    vfsMount(devfsProxy, "/dev", nil)
   end)
   -- always restore: a failed devfs load must never leave dispatch pointing at
   -- this root-privileged throwaway process
