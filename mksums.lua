@@ -2,7 +2,7 @@
 --
 --   luajit mksums.lua
 --
--- SHA256SUMS lets `apt sysupgrade` download only files whose content
+-- SHA256SUMS lets the `sys` upgrade in `apt upgrade` fetch only files whose content
 -- actually changed. Run this after editing any shipped file and commit
 -- SHA256SUMS together with the change, or the updater will fall back to a
 -- full download (it detects a stale checksum file via /VERSION).

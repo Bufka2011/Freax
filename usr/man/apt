@@ -13,8 +13,8 @@ SYNOPSIS
   apt download PACKAGE...
   apt clean
   apt autoremove
-  apt sysupdate
-  apt sysupgrade
+  apt verify [--repair]
+  apt install sys
 
 DESCRIPTION
   apt manages Freax packages (.fpkg archives) fetched from one or more
@@ -27,11 +27,12 @@ DESCRIPTION
   leaves a partial file in place (temp file plus rename). SHA256 sums
   from the repository index are checked before anything is installed.
 
-  Two separate update mechanisms share this command. Package operations
-  (`update`, `install`, `upgrade`, ...) use repositories listed in
-  /etc/apt/sources.list. Legacy OS self-update still exists as `apt
-  sysupdate` and `apt sysupgrade`, which pull core OS files from a single
-  URL.
+  The base system is the virtual package `sys`. It is not a real .fpkg
+  archive: `sys` is the set of files listed in /manifest, fetched from a
+  single URL, and /VERSION holds its version. `apt update` refreshes both
+  the repositories from /etc/apt/sources.list and the `sys` release, and
+  `apt upgrade` applies both. This replaces the old `apt sysupdate` /
+  `apt sysupgrade` pair, which no longer exist.
 
 COMMANDS
   update
@@ -89,20 +90,8 @@ COMMANDS
     Print the apt version (works offline).
   sources, source
     Print the effective repository list (works offline). With --os, print
-    the legacy OS self-update source instead.
-  sysupdate
-    Legacy OS self-update: fetch the remote VERSION and manifest,
-    compare them with the local /VERSION, and cache the manifest for
-    sysupgrade. OS files are not package-managed; this is unchanged from
-    earlier releases.
-  sysupgrade
-    Legacy OS self-update: download every manifest entry and install it
-    over the running hard drive. /etc/passwd, /etc/shadow, /etc/hostname,
-    /home, and a custom /etc/apt/sources.list are preserved. Kernel and
-    boot files take effect on the next in-game reboot. Every replaced file
-    is re-hashed after installation, so a file that failed to land is
-    reported as FAIL instead of counting as updated.
-  sysverify [--repair]
+    the URL the `sys` release is fetched from instead.
+  verify [--repair]
     Re-hash every installed file against the recorded /SHA256SUMS and list
     the ones that differ. This detects an update that reported success but
     left old files in place. With --repair (root) the differing files are
@@ -117,7 +106,7 @@ OPTIONS
   -f, --force
     Override safety checks. Forces operations that apt would otherwise
     refuse (for example, breaking a package that other installed
-    packages depend on) and, for sysupgrade, re-downloads files whose
+    packages depend on) and, for the system, re-downloads files whose
     local and remote versions already match.
   -q, --quiet
     Print less output.
@@ -137,8 +126,8 @@ OPTIONS
     After an operation, remove automatically installed dependencies that
     are no longer needed.
   --source=URL
-    Use URL as the legacy OS update source for this sysupdate/sysupgrade
-    run instead of /etc/apt/sources.list.
+    Use URL as the source for the `sys` release in this run instead of the
+    bare-URL fallback in /etc/apt/sources.list.
 
 MAINTAINER SCRIPTS
   A package may ship four Lua scripts, stored under
@@ -212,8 +201,12 @@ EXAMPLES
   apt remove --purge hello
     Remove hello and delete its conffiles.
 
-  apt sysupdate
-    Check for a new OS release (legacy updater).
+  apt policy sys
+    Show the installed and available system versions.
 
-  apt sysupgrade --source=http://192.168.1.5:8000/
-    Update the OS from a local test mirror.
+  apt install sys
+    Re-apply the current system release: every manifest file is fetched and
+    verified again. Use it to repair a system after a failed update.
+
+  apt upgrade --source=http://192.168.1.5:8000/
+    Update the system from a local test mirror.

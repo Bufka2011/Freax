@@ -59,8 +59,10 @@ Milestone reached: **M5** (multi-user credential boundary + shared runtime).
   `deb` source lines), index download and verification, dependency
   resolution, install/remove/upgrade/purge, maintainer scripts
   (`preinst`/`postinst`/`prerm`/`postrm`), and conffile handling.
-  Archives use the uncompressed `.fpkg` format. `apt sysupdate` /
-  `apt sysupgrade` retain the legacy manifest-based OS self-update.
+  Archives use the uncompressed `.fpkg` format. The base system itself is
+  the virtual package `sys` (the `/manifest` file set, versioned by
+  `/VERSION`), so `apt update` and `apt upgrade` cover packages and the OS
+  together; there is no separate self-update command.
 
 ## Accounts and privileges
 
@@ -104,9 +106,10 @@ boot address, then offers to reboot. See `man webinstall` (or `--help`).
 
 After that, use packages without leaving the game: `apt update`, then
 `apt install PACKAGE`, `apt upgrade` (needs an internet card). OS
-self-update is separate: `apt sysupdate`, `apt sysupgrade`, then
-`reboot` when asked (versioned by `/VERSION`; `sysupgrade` downloads only
-the files whose `SHA256SUMS` checksum changed, then verifies each one).
+self-update is part of the same command: `apt update`, `apt upgrade`, then
+`reboot` when asked. The system appears as the package `sys`; only files
+whose `SHA256SUMS` checksum changed are downloaded, and every installed
+file is re-hashed afterwards (`apt verify` re-checks the whole tree).
 
 ## Requirements
 
@@ -129,8 +132,8 @@ the files whose `SHA256SUMS` checksum changed, then verifies each one).
   `lib/fpkg.lua`, `lib/dpkg.lua`, `lib/apt.lua` implement the package stack.
 - `usr/man/*` - man pages (extensionless).
 - `etc/` - config (motd, passwd, shadow, hostname, apt sources).
-- `manifest` - shipped-file list driving `install`, `apt sysupgrade`, and
-  demo protection.
+- `manifest` - shipped-file list driving `install`, the `sys` upgrade in
+  `apt upgrade`, and demo protection.
 - `selfcheck.lua` - dev smoke test (not installed).
 
 ### Packages
@@ -155,7 +158,7 @@ pool/<component>/<package>_<version>_all.fpkg
 Build the indexes from the repository root with `apt-ftparchive
 packages pool` and `apt-ftparchive release dists/<suite>`, then point
 `/etc/apt/sources.list` at it with a `deb URI <suite> <component>`
-line. OS self-update (`apt sysupdate`/`sysupgrade`) still uses the bare
-URL fallback and is independent of package sources.
+line. The `sys` release uses the bare-URL fallback and is independent of
+package sources (`apt update --source=URL` overrides it).
 
 See AGENTS.md for detailed development conventions.

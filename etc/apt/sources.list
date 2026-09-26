@@ -18,8 +18,8 @@ deb https://raw.githubusercontent.com/Bufka2011/Freax/main/apt freax main
 #
 #   deb http://192.168.1.5:8000/repo freax main
 #
-# The legacy OS self-updater (`apt sysupdate` / `apt sysupgrade`) reads this
+# The `sys` release (the base system itself, versioned by /VERSION) reads this
 # file differently: it ignores deb lines and uses the first bare URL it finds,
 # falling back to the built-in GitHub URL when there is none. Keep this file
-# to deb lines only; a bare URL here would override the self-updater default.
-# Pass --source=URL to sysupdate/sysupgrade to point at another OS mirror.
+# to deb lines only; a bare URL here would override the sys default.
+# Pass --source=URL to `apt update`/`apt upgrade` to point at another mirror.

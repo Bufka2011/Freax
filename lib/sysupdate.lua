@@ -13,6 +13,9 @@ local term = require("term")
 local sha256 = require("sha256")
 
 local sysupdate = {}
+-- summary of the last `apt update`, feeding sysupdate.status() so the OS can
+-- be presented as the virtual "sys" package
+local lastSummary
 
 local DEFAULT_SOURCE = "https://raw.githubusercontent.com/Bufka2011/Freax/main/"
 local CACHE_DIR = "/tmp/apt"
@@ -351,11 +354,53 @@ function sysupdate.update(opts)
   if localVersion() == remote then
     io.write("Already up to date (" .. n .. " files).\n")
   elseif sums then
-    io.write(changed .. " of " .. n .. " files changed. Run `apt sysupgrade`.\n")
+    io.write(string.format("%d of %d files changed in release %s.\n",
+      changed, n, remote))
   else
     io.write(n .. " files available (no checksums; full download).\n")
   end
+  lastSummary = {
+    installed = localVersion(), candidate = remote,
+    files = n, changed = changed, sums = sums ~= nil,
+  }
   return 0
+end
+
+-- Offline view of the virtual "sys" package, as recorded by the last
+-- `apt update`. This is what `apt list`, `apt policy` and the upgrade plan
+-- read, so the OS shows up like any other package.
+function sysupdate.status(opts)
+  local installed = localVersion()
+  local candidate
+  local cached = fs.readFile(CACHE_VERSION)
+  if cached and cached:match("%S+") then candidate = cached:match("%S+") end
+  local summary = lastSummary
+  if summary and summary.candidate == candidate then
+    installed = summary.installed
+  end
+  local files, changed = 0, 0
+  if summary then
+    files, changed = summary.files, summary.changed
+  else
+    local ctext = fs.readFile(CACHE_CHANGED)
+    if ctext then
+      for _ in ctext:gmatch("[^\n]+") do changed = changed + 1 end
+    end
+  end
+  local upgradable = false
+  if candidate and candidate ~= installed then
+    local ok, fpkg = pcall(require, "fpkg")
+    if ok then
+      upgradable = fpkg.versionCompare(candidate, installed) > 0
+    else
+      upgradable = true
+    end
+  end
+  return {
+    name = "sys", installed = installed, candidate = candidate,
+    upgradable = upgradable, files = files, changed = changed,
+    source = sysupdate.effectiveSource(opts),
+  }
 end
 
 function sysupdate.upgrade(opts)
@@ -513,7 +558,7 @@ function sysupdate.upgrade(opts)
   for _, f in ipairs(fails) do io.stderr:write("  " .. f .. "\n") end
   if failN > 0 then
     io.stderr:write("apt: upgrade incomplete, VERSION kept at " ..
-      localVersion() .. " (retry `apt sysupgrade`).\n")
+      localVersion() .. " (retry `apt upgrade`).\n")
     return 1
   end
   local vfd = fs.open("/VERSION", "w")
@@ -526,12 +571,14 @@ function sysupdate.upgrade(opts)
     if sfd then fs.write(sfd, sumsRaw) fs.close(sfd) end
   end
   io.write("Upgraded to " .. remote .. ".\n")
-  if kernelTouched then
+  -- `apt upgrade` combines this with package upgrades, so it can defer the
+  -- reboot prompt and ask once at the end.
+  if kernelTouched and not (opts and opts.deferReboot) then
     term.write("Kernel updated. Reboot now? [y/N]: ")
     local ans = term.readLine() or ""
     if ans:sub(1, 1):lower() == "y" then freax.reboot() end
   end
-  return 0
+  return 0, kernelTouched
 end
 
 -- Re-hash the installed tree against the recorded SHA256SUMS. Catches the

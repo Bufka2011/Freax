@@ -50,7 +50,7 @@ OPTIONS
 FILES
   /manifest
     Shipped-file list fetched from the repository and written to the target;
-    it also drives install and the legacy apt sysupdate/sysupgrade path.
+    it also drives install and the `sys` release used by apt upgrade.
 
   /etc/passwd, /etc/shadow
     Generated on the target with a single root account (optionally with a

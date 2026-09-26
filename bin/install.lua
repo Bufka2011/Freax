@@ -129,7 +129,7 @@ else
 end
 
 -- Single-source file list: the install manifest IS /manifest on the source
--- media (the same file `apt sysupgrade` pulls from). Adding a file means
+-- media (the same file the `sys` upgrade pulls from). Adding a file means
 -- editing `manifest` only -- there is no second hardcoded list.
 -- Repo root mirrors the installed root (/), so each dst doubles as its
 -- own source path on the install media: {dst, srcs={dst}}.
