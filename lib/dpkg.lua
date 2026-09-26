@@ -445,7 +445,8 @@ function dpkg.unpack(fpkgPath, opts)
             local rok, rerr = replaceFile(tmp, entry.path)
             if not rok then error(rerr) end
           else
-            fs.remove(tmp)
+            -- locally modified conffile: keep the incoming version beside it
+            -- as <path>.dpkg-new so the admin can merge (see `man apt`).
           end
         else
           local rok, rerr = replaceFile(tmp, entry.path)
@@ -454,21 +455,7 @@ function dpkg.unpack(fpkgPath, opts)
         list[#list + 1] = entry.path
         sums[#sums + 1] = hex .. "  " .. entry.path
       elseif entry.type == "l" then
-        local parent = fs.dir(entry.path)
-        if parent and parent ~= "" and parent ~= "/" then fpkg.ensureDir(parent) end
-        if fs.isLink(entry.path) then
-          fs.remove(entry.path)
-        elseif fs.isDirectory(entry.path) then
-          if not dirIsEmpty(entry.path) then
-            error("refusing to replace non-empty directory " .. entry.path)
-          end
-          fs.remove(entry.path)
-        elseif fs.exists(entry.path) then
-          fs.remove(entry.path)
-        end
-        local lok2, lerr2 = fs.link(entry.target, entry.path)
-        if not lok2 then error(lerr2 or ("cannot link " .. entry.path)) end
-        list[#list + 1] = entry.path
+        error("package symlinks are unsupported until VFS links persist across reboot")
       else
         reader:skip()
       end

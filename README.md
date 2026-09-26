@@ -4,14 +4,19 @@ Freax is a from-scratch OpenOS replacement for the OpenComputers mod
 (Minecraft 1.7.10, GTNH fork). Named after the original name Linus
 Torvalds rejected for Linux.
 
-Capability-based process isolation, bash-inspired shell, FHS filesystem
-layout.
+Kernel-mediated hardware access, real process credentials, bash-inspired
+shell, and FHS filesystem layout.
 
 ## Design
 
 - **Microkernel-ish**: coroutine processes with private `_ENV`, no
   ambient hardware authority. All hardware goes through `freax.*` syscalls;
   `component` is an OpenOS-compat bridge over those (`lib/component.lua`).
+- **Credentials**: kernel-owned real/effective UID/GID, root-only machine
+  controls, same-user process control, protected shadow DB, and non-root
+  writes restricted to the account's own home and private temporary tree.
+  This is a path policy, not POSIX mode bits: there is no per-file ownership
+  yet, so any account can write inside another account's home.
 - **Preemption by OC runtime**: the host kills scripts that run too long
   without yielding. That error unwinds through ONE coroutine - the hog
   dies, the kernel lives.
@@ -21,12 +26,12 @@ layout.
 
 ## Status
 
-Milestone reached: **M4** (OpenOS feature parity + shared module runtime).
+Milestone reached: **M5** (multi-user credential boundary + shared runtime).
 
 - Kernel: scheduler, process table, syscall sandbox, VFS with mounts
   (incl. read-only), pipes (8K buffer), virtual symlinks (RAM table, lost
   on reboot), parent PID tracking, graceful shutdown/reboot signalling,
-  autorun, ANSI SGR parsing in `ttyWrite`, Ctrl+C foreground-tree kill,
+  ANSI SGR parsing in `ttyWrite`, Ctrl+C foreground-tree kill,
   and a shared module runtime (each library compiles once per machine and
   dispatches to the running process).
 - Shell: bash-ish tokenizer, pipelines, redirects, builtins, PATH
@@ -44,9 +49,9 @@ Milestone reached: **M4** (OpenOS feature parity + shared module runtime).
   account DB generation, `/home/` preservation.
 - Coreutils: ls, cat, cp, mv, mkdir, rm, rmdir, touch, head, grep, wc,
   sort, du, tree, find, less, edit (touch/clipboard/Unicode/configurable
-  keybinds), ln, lua repl, ps (parent tree), kill, dmesg, df,
-  mount/umount (ro), free, uptime, date, time, yes, which, printenv,
-  hostname, cd, pwd, set/unset, source, rc, reboot/shutdown,
+  keybinds), ln, lua repl, ps (parent tree, UID, state, fd count), kill,
+  dmesg, df, mount/umount (ro), free, uptime, date, time, yes, which,
+  printenv, hostname, cd, pwd, set/unset, source, rc, reboot/shutdown,
   components/lshw/address/primary, flash, label, resolution, redstone,
   wget, pastebin, man, login, passwd, su, whoami, adduser, useradd,
   userdel.
@@ -56,6 +61,29 @@ Milestone reached: **M4** (OpenOS feature parity + shared module runtime).
   (`preinst`/`postinst`/`prerm`/`postrm`), and conffile handling.
   Archives use the uncompressed `.fpkg` format. `apt sysupdate` /
   `apt sysupgrade` retain the legacy manifest-based OS self-update.
+
+## Accounts and privileges
+
+- `login` verifies `/etc/shadow` and starts the session with the account's
+  kernel credentials through `freax.spawnAs`. `USER`/`LOGNAME` are display
+  only and authorize nothing.
+- Root-only: mount/umount, disk label writes, EEPROM writes, boot address,
+  redstone, screen resolution, reboot/shutdown, `apt`/`dpkg` mutation,
+  `install`, `systemctl`, `adduser`/`useradd`/`userdel`.
+- `su` and `passwd` are the only setuid programs. `su` refuses a passwordless
+  root account from an unprivileged session.
+- A non-root process may write inside its own home and `/tmp/<uid>`, and
+  may not read `/etc/shadow`. `kill` and `wait` are limited to the same UID
+  (root may target anything).
+- Password hashes are salted SHA-256, not a slow KDF: treat offline disk
+  access as a real risk.
+
+Freax targets practical OpenComputers use, not complete Linux/POSIX or
+OpenOS parity. Missing major work includes persistent POSIX mode metadata
+(per-file ownership), background job control, modem APIs, signed
+repositories, transactional OS updates, persistent symlinks, and network
+policy per service. Removable-media autorun stays disabled because
+kernel-phase autorun would bypass process isolation.
 
 ## Quick start
 
@@ -108,8 +136,9 @@ the files whose `SHA256SUMS` checksum changed, then verifies each one).
 ### Packages
 
 A package is a plain, uncompressed `.fpkg` archive: a control stanza
-plus data entries for regular files, conffiles, directories, and
-symlinks. `dpkg-deb -b` builds one from a `DEBIAN/control` directory;
+plus data entries for regular files, conffiles, and directories.
+Archive tools can represent symlinks, but system installation rejects them
+until VFS links persist across reboot. `dpkg-deb -b` builds one from a `DEBIAN/control` directory;
 on success it prints the archive's SHA256 and size for indexing.
 `dpkg` drives unpack/configure/remove and records state under
 `/var/lib/dpkg`; `apt` adds repositories, dependency resolution, and

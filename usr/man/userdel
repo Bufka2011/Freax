@@ -1,12 +1,12 @@
 NAME
-  userdel - removes a player from the list of authorized users
+  userdel - remove a Freax login account
 
 SYNOPSIS
   userdel NAME
 
 DESCRIPTION
-  Removes a player from the list of users authorized to use this computer. See `useradd`.
+  Removes NAME from /etc/passwd and /etc/shadow. The home directory is
+  preserved. Requires effective UID 0. See `useradd`.
 
 EXAMPLES
-  userdel Steve
-    Removes the player named `Steve` from the userlist.
+  userdel alice

@@ -36,7 +36,8 @@ if options.w then
     else
       value = ({["true"]=true,["on"]=true,["yes"]=true})[value] ~= nil
     end
-    rs.setWirelessOutput(value)
+    local wok, werr = rs.setWirelessOutput(value)
+    if not wok then io.stderr:write("redstone: " .. tostring(werr) .. "\n") return 1 end
   end
   io.write("in: " .. tostring(rs.getWirelessInput()) .. "\n")
   io.write("out: " .. tostring(rs.getWirelessOutput()) .. "\n")
@@ -47,7 +48,8 @@ elseif options.f then
       io.stderr:write("invalid frequency\n")
       return 1
     end
-    rs.setWirelessFrequency(tonumber(value))
+    local fok, ferr = rs.setWirelessFrequency(tonumber(value))
+    if not fok then io.stderr:write("redstone: " .. tostring(ferr) .. "\n") return 1 end
   end
   io.write("freq: " .. tostring(rs.getWirelessFrequency()) .. "\n")
 else
@@ -76,7 +78,8 @@ else
       else
         value = ({["true"]=true,["on"]=true,["yes"]=true})[value] and 255 or 0
       end
-      rs.setBundledOutput(side, color, value)
+      local bok, berr = rs.setBundledOutput(side, color, value)
+      if not bok then io.stderr:write("redstone: " .. tostring(berr) .. "\n") return 1 end
     end
     io.write("in: " .. tostring(rs.getBundledInput(side, color)) .. "\n")
     io.write("out: " .. tostring(rs.getBundledOutput(side, color)) .. "\n")
@@ -88,7 +91,8 @@ else
       else
         value = ({["true"]=true,["on"]=true,["yes"]=true})[value] and 15 or 0
       end
-      rs.setOutput(side, value)
+      local ok2, err2 = rs.setOutput(side, value)
+      if not ok2 then io.stderr:write("redstone: " .. tostring(err2) .. "\n") return 1 end
     end
     io.write("in: " .. tostring(rs.getInput(side)) .. "\n")
     io.write("out: " .. tostring(rs.getOutput(side)) .. "\n")

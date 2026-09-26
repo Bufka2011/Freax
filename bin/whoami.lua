@@ -1,2 +1,4 @@
--- whoami: print current user (M2).
-io.write((os.getenv("USER") or os.getenv("LOGNAME") or "root") .. "\n")
+-- whoami: print the real user name from kernel credentials.
+local auth = require("auth")
+local entry = auth.getPasswdByUid(freax.getuid())
+io.write((entry and entry.name or tostring(freax.getuid())) .. "\n")

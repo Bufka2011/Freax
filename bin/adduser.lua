@@ -1,7 +1,7 @@
 -- adduser: create a login account (M2, minimal).
 -- Root-only. Writes /etc/passwd + /etc/shadow (same formats auth.lua
 -- uses) and makes the home dir. UIDs for people start at 1000;
--- permissions/ownership enforcement belongs to the future user system.
+-- Kernel credentials enforce root-only account administration.
 local auth = require("auth")
 local fs = require("fs")
 local shell = require("shell")
@@ -13,8 +13,7 @@ if #args ~= 1 or (opts and opts.help) then
   return 1
 end
 
-local me = os.getenv("USER") or "root"
-if me ~= "root" then
+if freax.geteuid() ~= 0 then
   io.stderr:write("adduser: only root may add users\n")
   return 1
 end

@@ -21,6 +21,7 @@ local K = {}
 
 local procs    = {}
 local nextPid  = 1
+local exited, exitedOrder = {}, {}
 local bootfs, readFile   -- injected by init()
 local bootaddr = nil
 
@@ -1058,6 +1059,35 @@ local function safeRawset(t, k, v)
   return rawset(t, k, v)
 end
 
+local function pathWithin(path, base)
+  return base and base ~= "" and (path == base
+    or path:sub(1, #base + 1) == base .. "/")
+end
+
+local function isRoot(p)
+  return p and p.euid == 0
+end
+
+local function canReadPath(p, path)
+  if isRoot(p) then return true end
+  -- matches a second mount of the same volume too (e.g. /mnt/x/etc/shadow),
+  -- but never blocks a shadow-named file inside the caller's own home
+  if path == "/etc/shadow" or path:sub(-11) == "/etc/shadow" then
+    return pathWithin(path, p and p.home)
+  end
+  return true
+end
+
+local function canWritePath(p, path)
+  if isRoot(p) then return true end
+  return pathWithin(path, p and p.home)
+    or pathWithin(path, "/tmp/u" .. tostring((p and p.uid) or -1))
+end
+
+local function denied()
+  return nil, "permission denied"
+end
+
 local function readLibSource(name)
   local stem = name:gsub("%.", "/")
   local path = "/lib/" .. stem .. ".lua"
@@ -1108,6 +1138,7 @@ local function sharedDofile(path)
 end
 
 -- compile-once require for the shared machine env.
+local procRequire -- forward: sharedRequire restores it after each load
 local function sharedRequire(name)
   if name == "computer" then return sharedEnv.computer end
   if name == "unicode" then return sharedEnv.unicode end
@@ -1123,7 +1154,10 @@ local function sharedRequire(name)
   sharedLoading[name] = true
   local ok, res = pcall(fn, name)
   sharedLoading[name] = false
-  sharedEnv.require = sharedRequire -- package.lua may clobber the global
+  -- package.lua may clobber the global; restore the process-aware loader so
+  -- a shared module requiring a non-SHARED lib loads it per-process (frees on
+  -- exit) instead of permanently raising the machine floor.
+  sharedEnv.require = procRequire
   if not ok then error("init error in " .. name .. ": " .. tostring(res)) end
   sharedLibs[name] = res
   return res
@@ -1131,8 +1165,12 @@ end
 
 -- per-process require: libs outside the core SHARED set load in the
 -- requesting process env (and free with it); core boot libs are shared.
-local function procRequire(name)
+procRequire = function(name)
   if SHARED[name] then return sharedRequire(name) end
+  -- host-injected shims resolve without compiling anything per process
+  if name == "computer" or name == "unicode" or name == "bit32" or name == "os" then
+    return sharedRequire(name)
+  end
   local p = currentP
   if not p or not p.env then return sharedRequire(name) end
   p.libs = p.libs or {}
@@ -1159,7 +1197,10 @@ local sharedComputer = {
   tmpAddress = function() return freaxProxy.tmpAddr() end,
   getDeviceInfo = function() return freaxProxy.deviceInfo() end,
   address = function() return freaxProxy.machineAddr() end,
-  shutdown = function(reboot) pcall(computer.shutdown, reboot and true or false) end,
+  shutdown = function(reboot)
+    if reboot then return freaxProxy.reboot() end
+    return freaxProxy.shutdown()
+  end,
   pullSignal = function(sec)
     local p = currentP
     if not p then return nil end
@@ -1286,11 +1327,17 @@ local function makeEnv(p)
   local function myInh()
     local c = {}
     for k, v in pairs(p.vars or {}) do c[k] = v end
-    return { vars = c, cwd = p.cwd or "/", parent = p.pid }
+    return { vars = c, cwd = p.cwd or "/", parent = p.pid,
+      uid = p.uid, euid = p.euid, gid = p.gid, egid = p.egid,
+      home = p.home }
   end
 
   ---- process control ----
   function freax.getpid() return p.pid end
+  function freax.getuid() return p.uid end
+  function freax.geteuid() return p.euid end
+  function freax.getgid() return p.gid end
+  function freax.getegid() return p.egid end
 
   function freax.exit()
     p.dead = true
@@ -1301,19 +1348,52 @@ local function makeEnv(p)
     return K.spawn(name, path, args, nil, myInh())
   end
 
+  function freax.spawnAs(name, path, args, uid, gid, home)
+    if not isRoot(p) then return denied() end
+    uid, gid = tonumber(uid), tonumber(gid)
+    if not uid or uid < 0 or not gid or gid < 0 then return nil, "bad credentials" end
+    local inh = myInh()
+    inh.uid, inh.euid, inh.gid, inh.egid = uid, uid, gid, gid
+    inh.home = vfsAbs(tostring(home or "/"), "/")
+    return K.spawn(name, path, args, nil, inh)
+  end
+
   function freax.ps()
     local out = {}
     for _, q in ipairs(procs) do
+      local state = q.dead and "dead" or q.pipeWait and "pipe"
+        or q.waitingFor and "wait" or q.started and "run" or "new"
       out[#out + 1] = { pid = q.pid, name = q.name, dead = q.dead or false,
-        parent = q.parent }
+        parent = q.parent, uid = q.uid, euid = q.euid,
+        gid = q.gid, egid = q.egid, state = state,
+        events = #q.queue, startedAt = q.startedAt, cwd = q.cwd }
     end
     return out
+  end
+  -- Kept out of ps(): the fd table scan is O(fds) and ps is polled twice a
+  -- second by the service manager.
+  function freax.fdCount(pid)
+    pid = tonumber(pid) or p.pid
+    if not isRoot(p) and pid ~= p.pid then return nil, "permission denied" end
+    local n = 0
+    for _, e in pairs(fds) do if e.owner == pid then n = n + 1 end end
+    return n
   end
 
   -- Foreground wait: shell uses this so interactive children (install)
   -- own the keyboard. No input is consumed here, so no echo fights.
   -- Returns the child's exit code (0 ok, 1 error) for && and ||.
   function freax.wait(pid)
+    local done = exited[pid]
+    if done then
+      if done.parent ~= p.pid and not isRoot(p) then return nil, "not a child" end
+      exited[pid] = nil
+      return done.code
+    end
+    local target
+    for _, q in ipairs(procs) do if q.pid == pid then target = q break end end
+    if not target then return nil, "no such process" end
+    if target.parent ~= p.pid and not isRoot(p) then return nil, "not a child" end
     p.waitingFor = pid
     local code = 0
     while true do
@@ -1322,7 +1402,12 @@ local function makeEnv(p)
         if q.pid == pid then found = q break end
       end
       if not found or found.dead then
-        if found and found.exitCode then code = found.exitCode end
+        if found then
+          found.reaped = true
+          if found.exitCode then code = found.exitCode end
+        end
+        local reaped = exited[pid]
+        if reaped then code, exited[pid] = reaped.code, nil end
         p.waitingFor = nil
         return code
       end
@@ -1423,14 +1508,16 @@ local function makeEnv(p)
     -- lstat-style: a (possibly dangling) link itself exists.
     local proxy, rest, abs, err = withProxy(path, false)
     if not proxy then return false end
+    if not canReadPath(p, abs) then return false end
     if rest == "" then return true end -- mount point
     if links[abs] then return true end
     local ok, r = pcall(proxy.exists, rest)
     return ok and r or false
   end
   function freax.fsIsDir(path)
-    local proxy, rest, _, err = withProxy(path)
+    local proxy, rest, abs, err = withProxy(path)
     if not proxy then return nil, err or "no such file" end
+    if not canReadPath(p, abs) then return denied() end
     if rest == "" then return true end
     local ok, r = pcall(proxy.isDirectory, rest)
     if not ok then return nil, tostring(r) end
@@ -1441,7 +1528,8 @@ local function makeEnv(p)
     return nil, "no such file"
   end
   function freax.fsSize(path)
-    local proxy, rest = withProxy(path)
+    local proxy, rest, abs = withProxy(path)
+    if not canReadPath(p, abs) then return 0 end
     if not proxy or rest == "" then return 0 end
     local ok, r = pcall(proxy.size, rest)
     return (ok and r) or 0
@@ -1455,7 +1543,8 @@ local function makeEnv(p)
   end
   -- device mtime in ms, 0 for virtual dirs / unsupported devices.
   function freax.fsLastModified(path)
-    local proxy, rest = withProxy(path)
+    local proxy, rest, abs = withProxy(path)
+    if not canReadPath(p, abs) then return 0 end
     if not proxy or rest == "" or not proxy.lastModified then return 0 end
     local ok, r = pcall(proxy.lastModified, rest)
     return (ok and r) or 0
@@ -1477,6 +1566,7 @@ local function makeEnv(p)
   function freax.fsList(path)
     local proxy, rest, abs, err = withProxy(path)
     if not proxy then return nil, err or "no such directory" end
+    if not canReadPath(p, abs) then return denied() end
     local ok, list = pcall(proxy.list, rest or "")
     local out = {}
     if ok and list then
@@ -1524,8 +1614,9 @@ local function makeEnv(p)
     return out
   end
   function freax.fsMakeDir(path)
-    local proxy, rest, _, err = withProxy(path, false)
+    local proxy, rest, abs, err = withProxy(path, false)
     if not proxy then return nil, err or "no such filesystem" end
+    if not canWritePath(p, abs) then return denied() end
     if rest == "" then return nil, "already exists" end
     local ok, r, err = pcall(proxy.makeDirectory, rest)
     if ok and r then return true end
@@ -1535,6 +1626,7 @@ local function makeEnv(p)
     -- never follows the final link: removing a link removes the link.
     local proxy, rest, abs, err = withProxy(path, false)
     if not proxy then return nil, err or "no such file" end
+    if not canWritePath(p, abs) then return denied() end
     if rest == "" then return nil, "cannot remove mount point" end
     if links[abs] then
       links[abs] = nil
@@ -1546,8 +1638,15 @@ local function makeEnv(p)
   end
   function freax.fsOpen(path, mode)
     mode = tostring(mode or "r")
-    local proxy, rest, _, err = withProxy(path)
+    local proxy, rest, abs, err = withProxy(path)
     if not proxy then return nil, err or "no such filesystem" end
+    local writing = mode:find("w", 1, true) or mode:find("a", 1, true)
+      or mode:find("+", 1, true)
+    if writing then
+      if not canWritePath(p, abs) then return denied() end
+    elseif not canReadPath(p, abs) then
+      return denied()
+    end
     if rest == "" then return nil, "is a directory" end
     local ok, h, err = pcall(proxy.open, rest, mode)
     if not ok or not h then return nil, tostring(err or h) end
@@ -1634,6 +1733,7 @@ local function makeEnv(p)
     return out
   end
   function freax.fsMount(addr, path, readonly)
+    if not isRoot(p) then return denied() end
     local ok, proxy = pcall(component.proxy, addr)
     if not ok or not proxy then return nil, "no such device" end
     if readonly then proxy = readonlyProxy(proxy) end
@@ -1641,6 +1741,7 @@ local function makeEnv(p)
     return true
   end
   function freax.fsUmount(pathOrAddr)
+    if not isRoot(p) then return denied() end
     local key = tostring(pathOrAddr)
     local abs = vfsAbs(key, "/")
     for i, m in ipairs(mounts) do
@@ -1696,6 +1797,7 @@ local function makeEnv(p)
     return false
   end
   function freax.rs(method, ...)
+    if not isRoot(p) then return denied() end
     if not freax.rsAvail() then return nil, "no redstone card" end
     local fn = rsProxy[method]
     if type(fn) ~= "function" then return nil, "no such method" end
@@ -1724,6 +1826,7 @@ local function makeEnv(p)
     return ok and r or nil, ok and nil or tostring(r)
   end
   function freax.eepromSet(data)
+    if not isRoot(p) then return denied() end
     local px = ee()
     if not px then return nil, "no eeprom" end
     local ok, r, err = pcall(px.set, data)
@@ -1737,6 +1840,7 @@ local function makeEnv(p)
     return ok and r or nil
   end
   function freax.eepromSetLabel(label)
+    if not isRoot(p) then return denied() end
     local px = ee()
     if not px then return nil, "no eeprom" end
     local ok, r, err = pcall(px.setLabel, label)
@@ -1751,6 +1855,7 @@ local function makeEnv(p)
   end
   -- gpu resolution control (read via ttySize).
   function freax.gpuSetResolution(w, h)
+    if not isRoot(p) then return denied() end
     local g = gpu0()
     if not g then return nil, "no gpu" end
     local ok, r, err = pcall(g.setResolution, w, h)
@@ -1760,7 +1865,7 @@ local function makeEnv(p)
   -- filesystem labels by address prefix.
   local function fsProxyByAddr(addr)
     for _, m in ipairs(mounts) do
-      if m.addr == addr or m.addr:sub(1, #addr) == addr then return m.proxy end
+      if m.addr and (m.addr == addr or m.addr:sub(1, #addr) == addr) then return m.proxy end
     end
     local ok, px = pcall(component.proxy, addr)
     return ok and px or nil
@@ -1772,6 +1877,7 @@ local function makeEnv(p)
     return ok and r or nil
   end
   function freax.fsSetLabel(addr, label)
+    if not isRoot(p) then return denied() end
     local px = fsProxyByAddr(tostring(addr))
     if not px or not px.setLabel then return nil, "no such device" end
     local ok, r, err = pcall(px.setLabel, label)
@@ -1865,13 +1971,15 @@ local function makeEnv(p)
     return K.spawn(name, path, args, { in_ = inFd, out = outFd, err = errFd }, myInh())
   end
   function freax.myInfo()
-    return { pid = p.pid, name = p.name, vars = p.vars }
+    return { pid = p.pid, name = p.name, vars = p.vars, parent = p.parent,
+      uid = p.uid, euid = p.euid, gid = p.gid, egid = p.egid }
   end
-  -- Single-user root: any process may reap any other (jobs, kill).
   function freax.kill(pid)
     for _, q in ipairs(procs) do
       if q.pid == pid then
+        if not isRoot(p) and p.uid ~= q.uid and p.euid ~= q.uid then return denied() end
         q.dead = true
+        if not q.exitCode then q.exitCode = 143 end -- 128 + SIGTERM
         return true
       end
     end
@@ -1884,6 +1992,7 @@ local function makeEnv(p)
   end
   function freax.getBootAddr() return bootaddr end
   function freax.setBootAddr(addr)
+    if not isRoot(p) then return denied() end
     -- computer.setBootAddress returns nothing on success in OC,
     -- so "no throw" counts as success; only false/exception is failure.
     local ok, r = pcall(computer.setBootAddress, addr)
@@ -1892,6 +2001,7 @@ local function makeEnv(p)
     return true
   end
   function freax.reboot()
+    if not isRoot(p) then return denied() end
     computer.pushSignal("shutdown")
     local deadline = computer.uptime() + 0.05
     while computer.uptime() < deadline do coroutine.yield() end
@@ -1899,6 +2009,7 @@ local function makeEnv(p)
     pcall(computer.shutdown, true)
   end
   function freax.shutdown()
+    if not isRoot(p) then return denied() end
     computer.pushSignal("shutdown")
     local deadline = computer.uptime() + 0.05
     while computer.uptime() < deadline do coroutine.yield() end
@@ -1933,6 +2044,7 @@ local function makeEnv(p)
     if not oNoFollow then return nil, oErr end
     local nNoFollow, nErr = expandLinks(absOf(newPath), false)
     if not nNoFollow then return nil, nErr end
+    if not canWritePath(p, oNoFollow) or not canWritePath(p, nNoFollow) then return denied() end
     if links[oNoFollow] then
       links[nNoFollow] = links[oNoFollow]
       links[oNoFollow] = nil
@@ -1995,6 +2107,7 @@ local function makeEnv(p)
     local abs = vfsAbs(tostring(linkpath), p.cwd or "/")
     local exp, err = expandLinks(abs, false)
     if not exp then return nil, err end
+    if not canWritePath(p, exp) then return denied() end
     -- the link itself must not exist (physical or virtual)
     if links[exp] then return nil, "file already exists" end
     local proxy, rest = vfsResolve(exp)
@@ -2083,6 +2196,9 @@ local function makeEnv(p)
   end
   env.loadfile = function(path, mode, e)
     local abs = vfsAbs(tostring(path), p.cwd or "/")
+    local checked, checkErr = expandLinks(abs, true)
+    if not checked then return nil, checkErr end
+    if not canReadPath(p, checked) then return denied() end
     local env2 = e or env
     local fn, lerr = vfsLoad(abs, tostring(path), env2)
     if not fn and readFile then
@@ -2134,7 +2250,7 @@ local function makeEnv(p)
   function osT.sleep(t)
     local deadline = computer.uptime() + (t or 0)
     while computer.uptime() < deadline do
-      if freax.peekEvent() then coroutine.yield() else procPull(p) end
+      coroutine.yield()
     end
   end
   osT.remove = function(path) return freax.fsRemove(path) end
@@ -2146,8 +2262,15 @@ local function makeEnv(p)
     coroutine.yield()
   end
   osT.tmpname = function()
+    local base
+    if isRoot(p) then
+      base = "/tmp"
+    else
+      base = "/tmp/u" .. tostring(p.uid)
+      if not freax.fsIsDir(base) then base = p.home or "/" end
+    end
     for _ = 1, 10 do
-      local n = "/tmp/" .. tostring(math.random(1, 0x7FFFFFFF))
+      local n = base .. "/" .. tostring(math.random(1, 0x7FFFFFFF))
       if not freax.fsExists(n) then return n end
     end
   end
@@ -2321,6 +2444,11 @@ local function makeEnv(p)
     local abs = vfsAbs(tostring(path), p.cwd or "/")
     local exp, expErr = expandLinks(abs, true)
     if not exp then return nil, expErr end
+    if mode == "r" then
+      if not canReadPath(p, exp) then return denied() end
+    elseif not canWritePath(p, exp) then
+      return denied()
+    end
     local proxy, rest = vfsResolve(exp)
     if not proxy then return nil, "no such filesystem" end
     if rest == "" then return nil, "is a directory" end
@@ -2417,13 +2545,27 @@ end
 ---------------------------------------------------------------
 
 function K.spawn(name, path, args, stdio, inh)
+  local cwd = (inh and inh.cwd) or "/"
+  local abs = vfsAbs(path, cwd)
+  local execAbs = expandLinks(abs, true) or abs
+  local uid = (inh and inh.uid) or 0
+  local gid = (inh and inh.gid) or 0
+  -- exec never carries an elevated euid: only the tiny setuid allowlist
+  -- below raises it, so a setuid program cannot leak root to its children.
+  local euid = uid
+  local egid = gid
+  -- Small trusted setuid surface until persistent mode metadata lands.
+  if execAbs == "/bin/su.lua" or execAbs == "/bin/passwd.lua" then euid = 0 end
   local p = {
     pid = nextPid, name = name,
     queue = {}, started = false, dead = false,
     -- children inherit cwd + env vars (like a real fork/exec)
-    cwd = (inh and inh.cwd) or "/",
+    cwd = cwd,
     vars = inh and inh.vars,
     parent = inh and inh.parent,
+    uid = uid, euid = euid, gid = gid, egid = egid,
+    home = (inh and inh.home) or "/",
+    startedAt = computer.uptime(),
   }
   -- Optional redirected stdio for pipelines (M2): pipe fds are duped
   -- into the child; {path, mode} specs are opened independently.
@@ -2463,14 +2605,20 @@ function K.spawn(name, path, args, stdio, inh)
       elseif type(spec) == "table" then
         local abs = vfsAbs(tostring(spec[1]), "/")
         abs = expandLinks(abs, true) or abs
+        local smode = spec[2] or dfltMode
+        if (smode == "r" and not canReadPath(p, abs))
+          or (smode ~= "r" and not canWritePath(p, abs)) then
+          okAll = false
+          return nil
+        end
         local proxy, rest = vfsResolve(abs)
         if proxy and rest ~= "" then
-          local ok, hnd = pcall(proxy.open, rest, spec[2] or dfltMode)
+          local ok, hnd = pcall(proxy.open, rest, smode)
           if ok and hnd then
             local fd = nextFd
             nextFd = nextFd + 1
             fds[fd] = { proxy = proxy, h = hnd, owner = p.pid,
-              path = abs, mode = spec[2] or dfltMode }
+              path = abs, mode = smode }
             return kernelNewHandle(fd, p)
           end
         end
@@ -2485,7 +2633,7 @@ function K.spawn(name, path, args, stdio, inh)
   end
   local env = makeEnv(p)
   -- resolve a relative program path against the caller's cwd, not /
-  local abs = vfsAbs(path, p.cwd or "/")
+  if not canReadPath(p, execAbs) then closeOwnedFds(p.pid) return denied() end
   local fn, lerr = vfsLoad(abs, path, env)
   if not fn then
     local base = path:match("([^/]+)$")
@@ -2570,6 +2718,14 @@ function K.loop()
     for i = #procs, 1, -1 do
       local p = procs[i]
       if p.dead then
+        if not p.reaped then
+          exited[p.pid] = { code = p.exitCode or 0, parent = p.parent }
+          exitedOrder[#exitedOrder + 1] = p.pid
+          if #exitedOrder > 64 then
+            local old = table.remove(exitedOrder, 1)
+            exited[old] = nil
+          end
+        end
         closeOwnedFds(p.pid)
         foreground[p.pid] = nil
         table.remove(procs, i)
@@ -2624,13 +2780,13 @@ end
 local function mountDevfs()
   if devfsMounted or devfsLoading then return end
   devfsLoading = true
+  local p0 = { pid = 0, name = "kernel", queue = {}, vars = {},
+    uid = 0, euid = 0, gid = 0, egid = 0, home = "/" }
+  local env = makeEnv(p0)
+  local prevP = currentP
+  currentP = p0
   local ok, err = pcall(function()
-    local p0 = { pid = 0, name = "kernel", queue = {}, vars = {} }
-    local env = makeEnv(p0)
-    local prevP = currentP
-    currentP = p0
     local devfs = env.require("devfs")
-    currentP = prevP
     if type(devfs) ~= "table" or type(devfs.api) ~= "table"
       or type(devfs.api.proxy) ~= "table" then
       error("missing api.proxy")
@@ -2645,6 +2801,9 @@ local function mountDevfs()
     end)
     vfsMount(devfs.api.proxy, "/dev", nil)
   end)
+  -- always restore: a failed devfs load must never leave dispatch pointing at
+  -- this root-privileged throwaway process
+  currentP = prevP
   devfsLoading = false
   if ok then
     devfsMounted = true
@@ -2691,35 +2850,8 @@ function K.init(a, b)
       end
     end
   end
-  -- autorun: execute .autorun or .autorun.lua from non-boot mounts
-  for _, m in ipairs(mounts) do
-    if m.path ~= "/" and m.proxy then
-      local function tryRun(fname)
-        local f, err = m.proxy.open(fname, "r")
-        if f then
-          local src = ""
-          while true do
-            local chunk = f:read(4096)
-            if not chunk then break end
-            src = src .. chunk
-          end
-          f:close()
-          if #src > 0 then
-            local fn, loadErr = load(src, "=" .. fname)
-            if fn then
-              local ok, runErr = pcall(fn)
-              if not ok then K.klog("autorun " .. fname .. ": " .. tostring(runErr)) end
-              return true
-            else
-              K.klog("autorun " .. fname .. ": " .. tostring(loadErr))
-            end
-          end
-        end
-        return false
-      end
-      if not tryRun("/.autorun") then tryRun("/.autorun.lua") end
-    end
-  end
+  -- Removable-media autorun is intentionally disabled: executing media code
+  -- during kernel initialization would bypass process credentials and sandboxing.
   -- devfs mounts lazily on first /dev access (see vfsResolve); loading it
   -- eagerly cost ~20K on every boot even when /dev is never touched.
   -- Single-source version: /VERSION (apt-kept), fallback for old media.

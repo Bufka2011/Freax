@@ -40,9 +40,8 @@ COMMANDS
     /var/lib/apt/lists. Run this before installing or upgrading so apt
     knows what is available.
   upgrade
-    Upgrade every installed package that has a newer candidate. Never
-    removes a package or installs a new one to satisfy dependencies;
-    packages that would require that are left as-is.
+    Upgrade every installed package that has a newer candidate. It may
+    install new dependencies, but does not remove installed packages.
   full-upgrade, dist-upgrade
     Upgrade installed packages, allowing removals and new installs when
     required to complete the upgrade.

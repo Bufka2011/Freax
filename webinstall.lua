@@ -139,8 +139,9 @@ end
 local function writeFile(path, data)
   local fd, err = fs.open(path, "w")
   if not fd then return nil, err end
-  fd:write(data)
+  local ok, werr = fd:write(data)
   fd:close()
+  if not ok then return nil, werr or "write failed" end
   return true
 end
 
@@ -289,8 +290,12 @@ end
 
 -- Account database and per-machine config (never shipped).
 mkdirP(target.path, "/etc")
-writeFile(target.path .. "/etc/passwd",
+local wok, werr = writeFile(target.path .. "/etc/passwd",
   "root:x:0:0:root:/root:/bin/sh.lua\n")
+if not wok then
+  io.stderr:write("webinstall: cannot write account DB: " .. tostring(werr) .. "\n")
+  return 1
+end
 
 local shadow = "root::\n"
 io.write("Set root password (empty = none, change later with passwd): ")
@@ -315,8 +320,11 @@ if pw ~= "" then
     end
   end
 end
-writeFile(target.path .. "/etc/shadow", shadow)
-writeFile(target.path .. "/etc/hostname", "freax\n")
+if not writeFile(target.path .. "/etc/shadow", shadow)
+  or not writeFile(target.path .. "/etc/hostname", "freax\n") then
+  io.stderr:write("webinstall: cannot write account DB on target\n")
+  return 1
+end
 
 mkdirP(target.path, "/root")
 mkdirP(target.path, "/home")

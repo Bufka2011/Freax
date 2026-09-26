@@ -81,6 +81,7 @@ end
 -- chunk assigning `keybinds`; modifiers are matched against the kernel
 -- keyboard state. Defaults keep Freax's nano keys and add OpenOS ones.
 local function rootWritable()
+  if freax.geteuid() ~= 0 then return false end
   for _, d in ipairs(freax.fsDevices()) do
     if d.mount == "/" then return not d.readonly end
   end

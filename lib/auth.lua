@@ -4,9 +4,8 @@
 --   "name:x:uid:gid:gecos:home:shell"  (uid/gid reserved for the
 --   future user system; only name/home/shell are honoured today).
 --
--- SECURITY NOTE: sha256 is real hashing, but /etc/shadow stays
--- world-readable until Freax grows file permissions with the user
--- system. Anyone with the disk can read (then brute-force) it.
+-- /etc/shadow reads are restricted by kernel credentials. Offline disk
+-- access can still expose hashes, so passwords should remain non-trivial.
 
 local fs = require("fs")
 local sha256 = require("sha256")
@@ -53,7 +52,19 @@ function auth.getPasswd(user)
     local p = split(line)
     if p[1] == user then
       return { name = p[1], uid = tonumber(p[3]), gid = tonumber(p[4]),
-        gecos = p[5], home = p[6], shell = p[7] }
+        gecos = p[5] or "", home = p[6] or "", shell = p[7] or "" }
+    end
+  end
+  return nil
+end
+
+function auth.getPasswdByUid(uid)
+  uid = tonumber(uid)
+  for _, line in ipairs(readLines("/etc/passwd")) do
+    local p = split(line)
+    if tonumber(p[3]) == uid then
+      return { name = p[1], uid = uid, gid = tonumber(p[4]),
+        gecos = p[5] or "", home = p[6] or "", shell = p[7] or "" }
     end
   end
   return nil

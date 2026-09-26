@@ -37,14 +37,14 @@ while true do
   local user = term.readLine() or ""
   user = user:match("%S+") or ""
   local entry = (user ~= "") and auth.getPasswd(user) or nil
-  -- Prompt unless this is a known account with no password (nullok):
-  -- unknown users still get a prompt (then fail) so the flow leaks
-  -- nothing about which accounts exist.
+  -- Prompt unless the account is explicitly passwordless (nullok): a missing
+  -- or malformed shadow entry must still prompt, and unknown users get a
+  -- prompt too, so the flow leaks nothing about which accounts exist.
   local pw = ""
   local needPw = true
   if entry then
     local sh = auth.getShadow(user)
-    needPw = sh and not (sh.salt == "" and sh.hash == "")
+    needPw = not (sh and sh.salt == "" and sh.hash == "")
   end
   if needPw then
     term.write("Password: ")
@@ -65,19 +65,30 @@ while true do
       end
       freax.ttySetCursor(1, cy)
     end
+    local uid, gid = tonumber(entry.uid), tonumber(entry.gid)
+    if not uid or not gid then
+      term.writeln("Account " .. entry.name .. " has no usable uid/gid.")
+    else
     -- session env (throwaway: reset on next login iteration)
     os.setenv("USER", entry.name)
     os.setenv("LOGNAME", entry.name)
-    os.setenv("HOME", (entry.home ~= "" and entry.home) or "/")
-    local home = os.getenv("HOME")
-    if not fs.isDirectory(home) then
-      term.writeln("No home " .. home .. ", staying in /")
-      home = "/"
-      os.setenv("HOME", "/")
+    local privateTmp = "/tmp/u" .. tostring(uid)
+    if not fs.isDirectory(privateTmp) then fs.makeDirectory(privateTmp) end
+    os.setenv("TMPDIR", privateTmp)
+    os.setenv("TMP", privateTmp)
+    local home = entry.home or ""
+    if home == "" or not fs.isDirectory(home) then
+      if home ~= "" then term.writeln("No home " .. home .. ", using " .. privateTmp) end
+      home = privateTmp
+      if not fs.isDirectory(home) then
+        term.writeln("No writable home or temporary directory.")
+        home = "/"
+      end
     end
+    os.setenv("HOME", home)
     freax.setCwd(home)
     local shellPath = (entry.shell ~= "" and entry.shell) or "/bin/sh.lua"
-    local pid = freax.spawn(entry.name .. "-sh", shellPath, {})
+    local pid = freax.spawnAs(entry.name .. "-sh", shellPath, {}, uid, gid, home)
     if pid then
       freax.wait(pid) -- logout returns here
     else
@@ -85,6 +96,7 @@ while true do
     end
     term.writeln("")
     term.clear() -- fresh screen for the next login, like agetty
+    end
   end
-  end
+end
 end

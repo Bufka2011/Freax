@@ -1,33 +1,20 @@
-local process = require("process")
 local unicode = require("unicode")
 
 local elbow = unicode.char(0x2514)
 
-local cols = {"PID", "PARENT", "EVENTS", "THREADS", "HANDLES", "CMD"}
+local cols = {"PID", "UID", "PARENT", "STATE", "FDS", "EVENTS", "CMD"}
 
 -- collect a display row per live process
 local rows, byPid = {}, {}
 for _, p in ipairs(freax.ps()) do
-  local pi = process.info(p.pid)
-  local data = (pi and pi.data) or { handles = {} }
-
-  local handlers = rawget(data, "handlers") or {}
-  local events = 0
-  for _ in pairs(handlers) do events = events + 1 end
-
-  local threads = 0
-  for _, h in ipairs(data.handles) do
-    local mt = getmetatable(h)
-    if mt and mt.__status then threads = threads + 1 end
-  end
-
-  local handles = #data.handles
+local fdText = freax.fdCount(p.pid)
   local row = {
     PID = tostring(p.pid),
+    UID = tostring(p.euid or p.uid or 0),
     PARENT = p.parent and tostring(p.parent) or "-",
-    EVENTS = events == 0 and "-" or tostring(events),
-    THREADS = threads == 0 and "-" or tostring(threads),
-    HANDLES = handles == 0 and "-" or tostring(handles),
+    STATE = tostring(p.state or "?"),
+    FDS = fdText and tostring(fdText) or "-",
+    EVENTS = tostring(p.events or 0),
     CMD = p.name or "?",
     parent = p.parent,
   }

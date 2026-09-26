@@ -79,6 +79,80 @@ local computer = require("computer")
 check("uptime", computer.uptime() >= 0)
 check("kill-unknown", freax.kill(99999) == nil)
 
+check("getuid", type(freax.getuid) == "function" and type(freax.getuid()) == "number")
+check("geteuid", type(freax.geteuid) == "function" and type(freax.geteuid()) == "number")
+
+-- credential boundary: a UID 1000 session must be confined to its home and
+-- /tmp/u1000, must not read /etc/shadow, write /etc, mount, or kill PID 1.
+if freax.geteuid() ~= 0 or type(freax.spawnAs) ~= "function" then
+  io.write("skip credential boundary test (needs root)\n")
+elseif not freax.fsMakeDir("/tmp/u1000") and not freax.fsIsDir("/tmp/u1000") then
+  io.write("skip credential boundary test (no writable tmp)\n")
+else
+  local probe = [[
+local out = {}
+local function rec(k, v) out[#out + 1] = k .. "=" .. tostring(v) end
+rec("uid", freax.getuid())
+rec("euid", freax.geteuid())
+local s = io.open("/etc/shadow", "r")
+rec("shadow", s and "readable" or "denied")
+if s then s:close() end
+local e = io.open("/etc/s_sc_nr.txt", "w")
+rec("etcwrite", e and "allowed" or "denied")
+if e then e:close() os.remove("/etc/s_sc_nr.txt") end
+local t = io.open("/tmp/u1000/s_sc_nr.txt", "w")
+rec("tmpwrite", t and "allowed" or "denied")
+if t then t:close() end
+local m = freax.fsMount("0", "/mnt/sc_nr")
+rec("mount", m and "allowed" or "denied")
+local k = freax.kill(1)
+rec("kill-init", k and "allowed" or "denied")
+local a = freax.spawnAs("selfcheck-escalate", "/bin/ls.lua", {}, 0, 0, "/tmp/u1000")
+rec("spawnas", a and "allowed" or "denied")
+local w = freax.wait(1)
+rec("wait-init", (w == nil) and "denied" or "allowed")
+local r = io.open("/tmp/u1000/result.txt", "w")
+if r then r:write(table.concat(out, "\n")) r:close() end
+return 0
+]]
+  local pf = io.open("/tmp/s_sc_nr.lua", "w")
+  local pid, perr
+  if pf then
+    pf:write(probe) pf:close()
+    pid, perr = freax.spawnAs("selfcheck-nr", "/tmp/s_sc_nr.lua", {}, 1000, 1000, "/tmp/u1000")
+  end
+  if not pid then
+    io.write("skip credential boundary test (no writable tmp: " .. tostring(perr) .. ")\n")
+  else
+  freax.wait(pid)
+  local res, rerr = io.open("/tmp/u1000/result.txt", "r")
+  local data = res and res:read("*a") or nil
+  if res then res:close() end
+  check("cred-probe-read (" .. tostring(rerr) .. ")", data ~= nil)
+  local seen = {}
+  for line in (data or ""):gmatch("[^\n]+") do
+    local k, v = line:match("^([^=]+)=(.*)$")
+    seen[k] = v
+  end
+  check("cred-uid", seen.uid == "1000" and seen.euid == "1000")
+  check("cred-shadow", seen.shadow == "denied")
+  check("cred-etc-write", seen.etcwrite == "denied")
+  check("cred-tmp-write", seen.tmpwrite == "allowed")
+  check("cred-mount", seen.mount == "denied")
+  check("cred-kill-init", seen["kill-init"] == "denied")
+  check("cred-spawnas", seen.spawnas == "denied")
+  check("cred-wait-init", seen["wait-init"] == "denied")
+  check("cred-fdcount", type(freax.fdCount) == "function"
+    and type(freax.fdCount(freax.getpid())) == "number")
+  freax.fsRemove("/tmp/s_sc_nr.lua")
+  freax.fsRemove("/tmp/u1000/s_sc_nr.txt")
+  freax.fsRemove("/tmp/u1000/result.txt")
+  end
+end
+
+check("fdcount-self", type(freax.fdCount) == "function"
+  and type(freax.fdCount(freax.getpid())) == "number")
+
 for _, c in ipairs({"list /", "components", "lshw", "address",
   "primary gpu", "redstone", "flash", "label /", "resolution",
   "wget", "pastebin", "dmesg", "df", "mount", "apt version"}) do

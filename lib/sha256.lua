@@ -1,8 +1,9 @@
 -- sha256: pure-Lua SHA-256 (M2, no dependencies).
 -- Deliberately dependency-free (works under OC Lua, LuaJIT, PUC):
 -- 32-bit ops are done with plain arithmetic, no bit32/bit needed.
--- Used for the root password hash. Note: this is obfuscation-grade
--- security at best -- anyone with the disk can read /etc/shadow.
+-- Used for password hashes and package integrity. Password hashing remains
+-- fast SHA-256 rather than a dedicated slow KDF, so offline resistance is
+-- limited, especially with offline disk access.
 
 local sha256 = {}
 

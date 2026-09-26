@@ -4,7 +4,6 @@
 -- streams in 4K chunks so a package never has to fit in RAM.
 
 local fs = require("fs")
-local sha256 = require("sha256")
 
 local fpkg = {}
 
@@ -541,7 +540,7 @@ end
 function fpkg.hashFile(path)
   local fd, err = fs.open(path, "r")
   if not fd then return nil, nil, err end
-  local h = sha256.new()
+  local h = require("sha256").new()
   local size = 0
   while true do
     local chunk = fs.read(fd, 4096)

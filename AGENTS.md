@@ -43,9 +43,11 @@ demo-mode protection. Never-installed entries live in `SKIP_INSTALL`
 
 - Libraries compile **once** into a machine-wide `sharedEnv`, cache in
   `sharedLibs`, and dispatch to the running process via `currentP`.
-- `SHARED` allowlist = core boot libs (`fs shell term sh text transforms
-  package filesystem`). Everything else loads per-process and frees on exit.
+- `SHARED` allowlist = core boot libs (`fs term text transforms package
+  filesystem`). Everything else loads per-process and frees on exit.
   Adding a lib to `SHARED` permanently raises the machine floor - avoid.
+  `shell` and `sh` are deliberately per-process: they hold aliases, builtins
+  and `$?` that belong to one shell, not to the machine.
 - In processes, `freax`/`io`/`os` are dispatch proxies that resolve to
   `currentP.rawFreax`/`rawIO`/`rawOS`. Module code must not capture
   process-specific values at load time (only call them at runtime).
@@ -70,9 +72,29 @@ demo-mode protection. Never-installed entries live in `SKIP_INSTALL`
   error can never kill the shell (that would look like a relogin).
 - `/dev` (devfs) mounts lazily on first `/dev` access, not at boot.
 - Symlinks are a kernel RAM table, lost on reboot; cycles must error, not hang.
+  Packages must therefore not install symlink entries (`dpkg` rejects them).
+- Removable-media autorun is disabled on purpose: kernel-phase `load` would
+  run media code with kernel authority, outside process credentials.
 - `K.start` -> `/sbin/systemd.lua`, else `/bin/login.lua`, else `/bin/sh.lua`.
 - `/sbin/systemd.lua` is PID 1 and refuses to start a second instance
   (manual `systemd` otherwise spawns another login).
+
+## Credentials (kernel-owned identity)
+
+- Every process carries `uid/euid/gid/egid` plus `home`, set in `K.spawn` and
+  inherited by `myInh()`. `freax.getuid/geteuid/getgid/getegid` expose them;
+  `USER`/`LOGNAME` are display-only and must never authorize anything.
+- Root-only: mount/umount, label writes, EEPROM writes, boot address, redstone,
+  screen resolution change, reboot/shutdown, `freax.spawnAs`. `kill`/`wait`
+  require root or same UID (root may wait on any child; a user may only wait on
+  its own children).
+- Non-root writes are limited to `$home` and `/tmp/u<uid>`; `/etc/shadow` is
+  unreadable to non-root. This is a path policy, not POSIX mode bits: no
+  per-file ownership exists yet, so any account may write inside another
+  account's home. Persistent mode metadata is the planned fix.
+- `su` and `passwd` are the only trusted setuid entry points: `K.spawn` raises
+  `euid` to 0 for `/bin/su.lua` and `/bin/passwd.lua`. Keep that list tiny.
+- `login`/`su` create sessions with `freax.spawnAs(uid, gid, home)`.
 
 ## Low-RAM discipline (real hardware OOMs)
 

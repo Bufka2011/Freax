@@ -6,7 +6,9 @@ local shell = require("shell")
 local term = require("term")
 
 local args = shell.parse(...)
-local me = os.getenv("USER") or os.getenv("LOGNAME") or "root"
+local meEntry = auth.getPasswdByUid(freax.getuid())
+local me = (meEntry and meEntry.name)
+  or (freax.getuid() == 0 and "root" or tostring(freax.getuid()))
 local target = args[1] or me
 
 if not auth.getPasswd(target) then
@@ -14,12 +16,12 @@ if not auth.getPasswd(target) then
   return 1
 end
 
-if target ~= me and me ~= "root" then
+if target ~= me and freax.getuid() ~= 0 then
   io.stderr:write("passwd: only root may change other passwords\n")
   return 1
 end
 
-if target == me then
+if target == me and freax.getuid() ~= 0 then
   local sh = auth.getShadow(me)
   if sh and not (sh.salt == "" and sh.hash == "") then
     term.write("Current password: ")

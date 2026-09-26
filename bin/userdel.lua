@@ -10,6 +10,10 @@ if #args ~= 1 then
   io.write("Usage: userdel <name>\n")
   return 1
 end
+if freax.geteuid() ~= 0 then
+  io.stderr:write("userdel: only root may delete users\n")
+  return 1
+end
 
 local name = args[1]
 if not auth.getPasswd(name) then
@@ -37,3 +41,4 @@ if not ok then
   io.stderr:write("userdel: " .. tostring(err) .. "\n")
   return 1
 end
+return 0

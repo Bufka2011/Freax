@@ -4,8 +4,7 @@
 
 local fs = require("fs")
 local shell = require("shell")
-local dpkg = require("dpkg")
-local fpkg = require("fpkg")
+local dpkg, fpkg
 
 local args, opts = shell.parse(...)
 
@@ -48,9 +47,21 @@ if opts.h or opts.help then
 end
 
 if opts.version then
+  fpkg = require("fpkg")
   io.write("dpkg (freax) " .. tostring(fpkg.VERSION) .. "\n")
   return 0
 end
+
+local mutating = opts.i or opts.install or opts.unpack or opts.configure or opts.a
+  or opts.r or opts.remove or opts.P or opts.purge
+if mutating and freax.geteuid() ~= 0 then
+  io.stderr:write("dpkg: operation requires root\n")
+  return 1
+end
+
+dpkg = require("dpkg")
+
+if (opts.s or opts.status) and not fpkg then fpkg = require("fpkg") end
 
 if opts["print-architecture"] then
   io.write(dpkg.arch() .. "\n")

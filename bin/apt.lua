@@ -7,7 +7,7 @@
 
 local fs = require("fs")
 local shell = require("shell")
-local apt = require("apt")
+local apt
 
 local args, raw = shell.parse(...)
 local cmd = args[1]
@@ -100,18 +100,33 @@ local function run()
   end
 
   if cmd == "sysupdate" then
+    if freax.geteuid() ~= 0 then io.stderr:write("apt: sysupdate requires root\n") return 1 end
     return require("sysupdate").update(o)
   end
   if cmd == "sysupgrade" then
+    if freax.geteuid() ~= 0 then io.stderr:write("apt: sysupgrade requires root\n") return 1 end
     return require("sysupdate").upgrade(o)
   end
 
   if cmd == "version" then
     require("sysupdate").version()
     io.write("apt 1.0 (freax package manager)\n")
-    if pcall(require, "dpkg") then io.write("dpkg (freax)\n") end
+    io.write("dpkg (freax)\n")
     return 0
   end
+
+  local rootCommands = {
+    update = true, upgrade = true, ["full-upgrade"] = true,
+    ["dist-upgrade"] = true, install = true, reinstall = true,
+    remove = true, rm = true, purge = true, autoremove = true,
+    clean = true, autoclean = true, download = true,
+  }
+  if rootCommands[cmd] and freax.geteuid() ~= 0 then
+    io.stderr:write("apt: " .. cmd .. " requires root\n")
+    return 1
+  end
+
+  apt = require("apt")
 
   if cmd == "source" or cmd == "sources" then
     if o.os then return require("sysupdate").sources(o) end

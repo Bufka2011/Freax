@@ -39,6 +39,11 @@ if cmd == "list-units" then
   return
 end
 
+if freax.geteuid() ~= 0 then
+  io.stderr:write("systemctl: " .. cmd .. " requires root\n")
+  return 1
+end
+
 if cmd == "daemon-reload" then cmd, name = "reload", "systemd" end
 
 if not name and cmd ~= "status" then

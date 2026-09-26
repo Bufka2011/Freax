@@ -61,8 +61,8 @@ builtins.unalias = function(...)
   for _, a in ipairs(table.pack(...)) do shell.setAlias(tostring(a), nil) end
 end
 
--- Background jobs (single-user: any pid may be waited/killed).
-local jobs, nextJob = {}, 1
+-- Background job table (job spawning itself is not wired up yet).
+local jobs = {}
 local function jobAlive(pid)
   for _, p in ipairs(freax.ps()) do
     if p.pid == pid and not p.dead then return true end
@@ -85,7 +85,8 @@ end
 
 builtins.wait = function(pid)
   if pid then
-    freax.wait(tonumber(pid) or -1)
+    local ok, err = freax.wait(tonumber(pid) or -1)
+    if not ok and err then io.stderr:write("wait: " .. tostring(err) .. "\n") return 1 end
   else
     for _, j in ipairs(jobs) do
       for _, p2 in ipairs(j.pids) do freax.wait(p2) end
@@ -122,7 +123,8 @@ builtins.help = function()
   io.write("misc: which printenv hostname date time yes mktmp reboot shutdown install apt\n")
   io.write("hw: components lshw address primary redstone flash label resolution\n")
   io.write("net: wget pastebin\n")
-  io.write("ops: a | b, > >> < 2> 2>&1 &> & jobs, ; && ||, quotes, source (M2)\n")
+  io.write("ops: a | b, > >> < 2> 2>&1 &>, ; && ||, quotes, source (M2)\n")
+  io.write("note: background '&' jobs are not implemented yet\n")
 end
 
 builtins.exit = function() freax.exit() end
@@ -155,7 +157,26 @@ do
   local data = fs.readFile("/VERSION")
   if data and data:match("%S+") then _ver = data:match("%S+") end
 end
-term.writeln("FREAX " .. _ver .. " -- welcome, " .. (os.getenv("USER") or "root"))
+-- Cached per process: /etc/passwd must not be re-read on every prompt.
+-- Parsed inline instead of require("auth") so an interactive shell does not
+-- pull lib/auth.lua + lib/sha256.lua into its process.
+local _userCache, _userUid
+local function currentUser()
+  local uid = freax.geteuid()
+  if uid == _userUid and _userCache then return _userCache end
+  local name
+  local data = fs.readFile("/etc/passwd")
+  if data then
+    for line in (data .. "\n"):gmatch("(.-)\n") do
+      local name0, _, id = line:match("^([^:]*):[^:]*:(%d+):")
+      if tonumber(id) == uid then name = name0 break end
+    end
+  end
+  _userCache = name or os.getenv("USER") or tostring(uid)
+  _userUid = uid
+  return _userCache
+end
+term.writeln("FREAX " .. _ver .. " -- welcome, " .. currentUser())
 
 local function hostname()
   if not _hostname then
@@ -200,8 +221,8 @@ if freax.fsExists(profile) then
 end
 
 while true do
-  local user = os.getenv("USER") or "root"
-  local sym = (user == "root") and "#" or "$"
+  local user = currentUser()
+  local sym = (freax.geteuid() == 0) and "#" or "$"
   term.write(user .. "@" .. hostname() .. ":" .. freax.getCwd() .. sym .. " ")
   -- Ctrl+C cancels the line (ttyReadLine returns nil); an empty line is a
   -- no-op. pcall guards the REPL: a command error must never kill the

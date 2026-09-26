@@ -12,6 +12,10 @@ if opts.help then
   term.writeln("  Installs Freax to a hard drive.")
   return
 end
+if freax.geteuid() ~= 0 then
+  term.writeln("install: must be run as root")
+  return 1
+end
 
 -- Bug fix 1: start on a clean screen, like Ubuntu Server installer.
 term.clear()

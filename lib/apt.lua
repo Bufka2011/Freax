@@ -225,7 +225,7 @@ local function parseRelease(text)
       inSha = line:match("^SHA256:") and true or false
     elseif inSha then
       local hash, size, path = line:match("^%s*(%x%x%x%x+)%s+(%d+)%s+(.+%S)%s*$")
-      if hash then
+      if hash and #hash == 64 then
         hashes[path] = { sha256 = hash:lower(), size = tonumber(size) }
       end
     end
@@ -265,7 +265,10 @@ function apt.update(opts)
         else
           local expect = hashes[rel]
           local got, gsize = hashFile(tmp)
-          if expect and (got ~= expect.sha256 or gsize ~= expect.size) then
+          if not expect then
+            fs.remove(tmp)
+            summary.failed[#summary.failed + 1] = url .. ": missing Release SHA256"
+          elseif got ~= expect.sha256 or gsize ~= expect.size then
             fs.remove(tmp)
             summary.failed[#summary.failed + 1] = url .. ": SHA256 mismatch"
           else
@@ -300,7 +303,9 @@ function apt.loadIndex()
         for _, st in ipairs(fpkg.parseStanzas(data)) do
           local f = st.fields
           local name, ver = f.Package, f.Version
-          if name and ver then
+          local digest = f.SHA256 and f.SHA256:lower() or nil
+          local size = tonumber(f.Size)
+          if name and ver and f.Filename and digest and #digest == 64 and size then
             index[name] = index[name] or {}
             if not index[name][ver] then
               index[name][ver] = {
@@ -308,8 +313,8 @@ function apt.loadIndex()
                 uri = src.uri,
                 component = comp,
                 filename = f.Filename,
-                sha256 = f.SHA256 and f.SHA256:lower() or nil,
-                size = tonumber(f.Size),
+                sha256 = digest,
+                size = size,
               }
             end
           end
@@ -491,6 +496,7 @@ function apt.download(names, opts)
     local cand = ver and apt.candidate(name, ver) or apt.candidate(name)
     if not cand then return nil, "unable to locate package " .. name end
     if not cand.filename then return nil, name .. ": no Filename in index" end
+    if not cand.sha256 or not cand.size then return nil, name .. ": incomplete integrity metadata" end
     local dest = apt.archivesDir .. "/" .. name .. "_" .. cand.fields.Version
       .. "_all.fpkg"
     if not fs.exists(dest) or opts.reinstall then
@@ -499,11 +505,11 @@ function apt.download(names, opts)
       if not ok then return nil, name .. ": " .. tostring(err) end
     end
     local got, gsize = hashFile(dest)
-    if cand.sha256 and got ~= cand.sha256 then
+    if got ~= cand.sha256 then
       fs.remove(dest)
       return nil, name .. ": SHA256 mismatch"
     end
-    if cand.size and gsize ~= cand.size then
+    if gsize ~= cand.size then
       fs.remove(dest)
       return nil, name .. ": size mismatch"
     end
@@ -915,11 +921,11 @@ local function runPlan(plan, requested, opts)
       if not ok then return nil, name .. ": " .. tostring(derr) end
     end
     local got, gsize = hashFile(dest)
-    if cand.sha256 and got ~= cand.sha256 then
+    if got ~= cand.sha256 then
       fs.remove(dest)
       return nil, name .. ": SHA256 mismatch"
     end
-    if cand.size and gsize ~= cand.size then
+    if gsize ~= cand.size then
       fs.remove(dest)
       return nil, name .. ": size mismatch"
     end

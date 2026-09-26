@@ -13,7 +13,9 @@ DESCRIPTION
   format. An archive begins with the magic line FREAXPKG 1 and ends with
   @end. It holds a control entry, optional maintainer scripts, and one
   entry per installed path: regular files, conffiles, directories, and
-  symlinks. There is no compression and no checksum inside the archive;
+  symlinks. Installed-system dpkg currently rejects symlink entries because
+  Freax VFS symlinks do not persist across reboot. There is no compression
+  and no checksum inside the archive;
   repository indexes carry the SHA256 of the whole file (see
   `man apt-ftparchive`).
 

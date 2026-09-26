@@ -11,6 +11,10 @@ if #args ~= 1 then
   io.write("Usage: useradd <name>\n")
   return 1
 end
+if freax.geteuid() ~= 0 then
+  io.stderr:write("useradd: only root may add users\n")
+  return 1
+end
 
 local name = args[1]
 if not name:match("^[%w_][%w_.-]*$") then
@@ -48,3 +52,8 @@ if not fd then
 end
 fs.write(fd, name .. ":x:" .. uid .. ":" .. uid .. "::" .. home .. ":/bin/sh.lua\n")
 fs.close(fd)
+local sfd, serr = fs.open("/etc/shadow", "a")
+if not sfd then io.stderr:write("useradd: " .. tostring(serr) .. "\n") return 1 end
+fs.write(sfd, name .. ":\n")
+fs.close(sfd)
+return 0
