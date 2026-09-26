@@ -61,8 +61,9 @@ features rather than duplicating that status here.
 - Shared modules compile into `sharedEnv`. Their `freax`, `io`, and `os` values
   are dispatch proxies resolved through the currently scheduled process. Never
   capture process-specific state at module load time.
-- `lib/computer.lua`, `lib/unicode.lua`, and `lib/bit32.lua` are require shims
-  for kernel-injected globals, not independent implementations.
+- `lib/computer.lua` and `lib/unicode.lua` are require shims for kernel-injected
+  globals. `lib/bit32.lua` is the per-process fallback when host `bit32` lacks
+  the Lua 5.2 API.
 
 ## Credentials
 

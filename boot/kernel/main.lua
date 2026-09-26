@@ -1051,7 +1051,11 @@ end
 local safeString = readonly(string, "string library")
 local safeTable = readonly(table, "table library")
 local safeMath = readonly(math, "math library")
-local safeBit32 = readonly(bit32, "bit32 library")
+local safeBit32
+if type(bit32) == "table" and type(bit32.band) == "function"
+  and type(bit32.bor) == "function" then
+  safeBit32 = readonly(bit32, "bit32 library")
+end
 local safeCoroutine = readonly(coroutine, "coroutine library")
 local safeUnicode = readonly(hostUnicode or {}, "unicode library")
 local function safeRawset(t, k, v)
@@ -1142,7 +1146,7 @@ local procRequire -- forward: sharedRequire restores it after each load
 local function sharedRequire(name)
   if name == "computer" then return sharedEnv.computer end
   if name == "unicode" then return sharedEnv.unicode end
-  if name == "bit32" then return sharedEnv.bit32 end
+  if name == "bit32" and safeBit32 then return safeBit32 end
   if name == "os" then return sharedEnv.os end
   if sharedLibs[name] ~= nil then return sharedLibs[name] end
   if sharedLoading[name] then error("already loading: " .. name, 2) end
@@ -1168,7 +1172,8 @@ end
 procRequire = function(name)
   if SHARED[name] then return sharedRequire(name) end
   -- host-injected shims resolve without compiling anything per process
-  if name == "computer" or name == "unicode" or name == "bit32" or name == "os" then
+  if name == "computer" or name == "unicode" or name == "os"
+    or (name == "bit32" and safeBit32) then
     return sharedRequire(name)
   end
   local p = currentP
