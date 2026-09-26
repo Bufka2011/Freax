@@ -180,21 +180,7 @@ local function hostname()
   return _hostname
 end
 
-freax.ttySetCompleter(function(buf)
-  local word = buf:match("[%w_./%-]+$") or ""
-  local matches, seen = {}, {}
-  for dir in (os.getenv("PATH") or "/sbin:/bin:/usr/bin:."):gmatch("[^:]+") do
-    local list = fs.list(dir) or {}
-    for _, name in ipairs(list) do
-      local base = name:match("^(.+)%.") or name
-      if base:sub(1, #word) == word and not seen[base] then
-        seen[base] = true; matches[#matches + 1] = base
-      end
-    end
-  end
-  table.sort(matches)
-  return matches
-end)
+freax.ttySetCompleter(sh.complete)
 
 local profile = "/etc/profile.lua"
 if freax.fsExists(profile) then

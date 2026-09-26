@@ -915,16 +915,23 @@ local function ttyReadLine(p, mask, seed)
           redraw()
         end
       elseif code == 15 and not echo and p.completer then -- tab
-        local matches = p.completer(buf)
+        local before = pos > 0 and usub(buf, 1, pos) or ""
+        local after = usub(buf, pos + 1)
+        local afterWord = after:match("^%S*") or ""
+        local afterRest = usub(after, ulen(afterWord) + 1)
+        local okComp, matches = pcall(p.completer, before, pos + 1)
+        if not okComp then matches = nil end
         if matches and #matches > 0 then
-          local word = buf:match("%S+$") or ""
-          local prefix = buf:sub(1, #buf - #word)
+          local word = before:match("%S+$") or ""
+          local prefixLen = ulen(before) - ulen(word)
+          local prefix = prefixLen > 0 and usub(before, 1, prefixLen) or ""
           if #matches == 1 then
-            buf = prefix .. matches[1] .. " "
-            pos = bufLen()
+            local suffix = matches[1]:sub(-1) == "/" and "" or " "
+            local completed = prefix .. matches[1] .. suffix
+            buf = completed .. afterRest
+            pos = ulen(completed)
             redraw()
           else
-            pos = bufLen()
             redraw()
             ttyNewline()
             ttyWrite(table.concat(matches, "  ") .. "\n")

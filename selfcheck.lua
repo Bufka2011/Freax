@@ -36,6 +36,9 @@ end
 local ser = require("serialization")
 check("ser roundtrip", ser.unserialize(ser.serialize({a = 1})).a == 1)
 check("sides", require("sides").north == 2)
+local sh = require("sh")
+local completions = sh.complete("lua /self")
+check("path completion", #completions == 1 and completions[1] == "/selfcheck.lua")
 
 local thread = require("thread")
 local log = {}

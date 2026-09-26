@@ -200,6 +200,81 @@ function sh.expand(value)
   return expanded
 end
 
+local function completionAdd(out, seen, value, prefix)
+  if value:sub(1, #prefix) == prefix and not seen[value] then
+    seen[value] = true
+    out[#out + 1] = value
+  end
+end
+
+local completionSpecial = {
+  [" "] = true, ["\t"] = true, ["\r"] = true, ["\n"] = true,
+  ["\\"] = true, ["\""] = true, ["'"] = true, ["`"] = true,
+  ["$"] = true, [";"] = true, ["|"] = true, ["&"] = true,
+  ["<"] = true, [">"] = true, ["*"] = true, ["?"] = true,
+  ["["] = true, ["]"] = true,
+}
+
+local function escapeCompletion(value)
+  local out = {}
+  for i = 1, #value do
+    local char = value:sub(i, i)
+    if completionSpecial[char] then out[#out + 1] = "\\" end
+    out[#out + 1] = char
+  end
+  return table.concat(out)
+end
+
+function sh.complete(line)
+  line = tostring(line or "")
+  local word = line:match("%S*$") or ""
+  local before = line:sub(1, #line - #word)
+  local statement = before:match("([^;|&]*)$") or before
+  local commandPosition = not statement:find("%S")
+  local out, seen = {}, {}
+
+  if commandPosition and not word:find("/", 1, true) then
+    for name in pairs(sh.internal.builtins) do
+      completionAdd(out, seen, name, word)
+    end
+    for name in shell.aliases() do
+      completionAdd(out, seen, name, word)
+    end
+    for dir in (os.getenv("PATH") or "/sbin:/bin:/usr/bin:."):gmatch("[^:]+") do
+      local resolved = shell.resolve(dir)
+      for _, name in ipairs(fs.list(resolved) or {}) do
+        name = name:gsub("/$", "")
+        local path = fs.concat(resolved, name)
+        if not fs.isDirectory(path) then
+          completionAdd(out, seen, name:gsub("%.lua$", ""), word)
+        end
+      end
+    end
+  else
+    local optionPrefix, partial = word:match("^(.*=)([^=]*)$")
+    optionPrefix, partial = optionPrefix or "", partial or word
+    local base = partial:match("^(.*[/])") or ""
+    local namePrefix = partial:sub(#base + 1)
+    local resolved = shell.resolve(base == "" and "." or base)
+    if fs.isDirectory(resolved) then
+      for _, name in ipairs(fs.list(resolved) or {}) do
+        name = name:gsub("/$", "")
+        if name:sub(1, #namePrefix) == namePrefix then
+          local candidate = base .. name
+          if fs.isDirectory(fs.concat(resolved, name)) then
+            candidate = candidate .. "/"
+          end
+          candidate = optionPrefix .. escapeCompletion(candidate)
+          completionAdd(out, seen, candidate, optionPrefix .. base .. namePrefix)
+        end
+      end
+    end
+  end
+
+  table.sort(out)
+  return out
+end
+
 -------------------------------------------------------------------------------
 -- command execution (Freax-native replacement for full_sh's thread machinery)
 
