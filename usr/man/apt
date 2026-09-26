@@ -99,7 +99,14 @@ COMMANDS
     Legacy OS self-update: download every manifest entry and install it
     over the running hard drive. /etc/passwd, /etc/shadow, /etc/hostname,
     /home, and a custom /etc/apt/sources.list are preserved. Kernel and
-    boot files take effect on the next in-game reboot.
+    boot files take effect on the next in-game reboot. Every replaced file
+    is re-hashed after installation, so a file that failed to land is
+    reported as FAIL instead of counting as updated.
+  sysverify [--repair]
+    Re-hash every installed file against the recorded /SHA256SUMS and list
+    the ones that differ. This detects an update that reported success but
+    left old files in place. With --repair (root) the differing files are
+    downloaded again and replaced; preserved local files are never touched.
   help
     Print usage.
 

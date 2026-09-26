@@ -194,6 +194,45 @@ local function sha256File(path)
   return h:hex()
 end
 
+local function kernelChanged(paths)
+  for _, p in ipairs(paths) do if NEEDS_REBOOT[p] then return true end end
+  return false
+end
+
+-- Replace an installed file with an already downloaded temp file.
+-- OC filesystem proxies commonly refuse to rename over an existing file, so
+-- the old file is moved aside first and the result is re-hashed: a silent
+-- no-op rename must never be reported as a successful update.
+local function replaceInstalled(tmp, dst, want)
+  local backup = dst .. ".apt-old"
+  if fs.exists(backup) or fs.isLink(backup) then fs.remove(backup) end
+  local hadOld = fs.exists(dst) or fs.isLink(dst)
+  if hadOld then
+    local bok = os.rename(dst, backup)
+    if not bok then
+      -- cannot move the old file aside: drop it, the replacement is already
+      -- hash-verified
+      fs.remove(dst)
+    end
+  end
+  local rok, rerr = os.rename(tmp, dst)
+  if not rok then
+    if hadOld and fs.exists(backup) then os.rename(backup, dst) end
+    fs.remove(tmp)
+    return nil, tostring(rerr or "rename failed")
+  end
+  if want then
+    local landed = sha256File(dst)
+    if landed ~= want then
+      fs.remove(dst)
+      if hadOld and fs.exists(backup) then os.rename(backup, dst) end
+      return nil, "installed file does not match its checksum"
+    end
+  end
+  if hadOld and (fs.exists(backup) or fs.isLink(backup)) then fs.remove(backup) end
+  return true
+end
+
 -- Only trust remote checksums that describe the remote VERSION we just
 -- fetched: a stale SHA256SUMS would otherwise hide changed files.
 local function validSums(remoteBody, sums)
@@ -455,9 +494,8 @@ function sysupdate.upgrade(opts)
             fails[#fails + 1] = dst .. ": checksum mismatch"
             io.write("FAIL " .. dst .. " (checksum)\n")
           else
-            local rok, rerr = os.rename(tmp, dst)
+            local rok, rerr = replaceInstalled(tmp, dst, want)
             if not rok then
-              fs.remove(tmp)
               failN = failN + 1
               fails[#fails + 1] = dst .. ": " .. tostring(rerr)
               io.write("FAIL " .. dst .. "\n")
@@ -494,6 +532,74 @@ function sysupdate.upgrade(opts)
     if ans:sub(1, 1):lower() == "y" then freax.reboot() end
   end
   return 0
+end
+
+-- Re-hash the installed tree against the recorded SHA256SUMS. Catches the
+-- class of failure where an update reported success but a file never landed
+-- (a refused rename looks exactly like a successful one). --repair
+-- re-downloads only the files that differ.
+function sysupdate.verify(opts)
+  opts = opts or {}
+  if not needNet() then return 1 end
+  local text = fs.readFile("/SHA256SUMS")
+  if not text then
+    io.stderr:write("apt: no /SHA256SUMS recorded; run `apt sysupdate` first.\n")
+    return 1
+  end
+  local sums = parseSums(text)
+  local names = {}
+  for path in pairs(sums) do names[#names + 1] = path end
+  table.sort(names)
+  local bad = {}
+  io.write("Verifying " .. #names .. " files...\n")
+  for _, path in ipairs(names) do
+    if not (PRESERVE[path] or SKIP_DEV[path]) then
+      if sha256File(path) ~= sums[path] then
+        bad[#bad + 1] = path
+        io.write("BAD  " .. path .. "\n")
+      end
+    end
+  end
+  if #bad == 0 then
+    io.write("All installed files match.\n")
+    return 0
+  end
+  io.write(string.format("%d of %d files differ.\n", #bad, #names))
+  if not (opts.repair or opts.r) then
+    io.write("Run `apt sysverify --repair` to re-download them.\n")
+    return 1
+  end
+  if freax.geteuid() ~= 0 then
+    io.stderr:write("apt: sysverify --repair requires root\n")
+    return 1
+  end
+  local src = sysupdate.effectiveSource(opts)
+  local fixed = 0
+  for _, dst in ipairs(bad) do
+    local tmp = dst .. ".apt-new"
+    local parent = fs.dir(dst)
+    if parent and parent ~= "/" and parent ~= "" then mkdirP(parent) end
+    local ok, err = fetchToFile(src .. dst:sub(2), tmp)
+    if not ok then
+      io.stderr:write("  " .. dst .. ": " .. tostring(err) .. "\n")
+    elseif sha256File(tmp) ~= sums[dst] then
+      fs.remove(tmp)
+      io.stderr:write("  " .. dst .. ": checksum mismatch on download\n")
+    else
+      local rok, rerr = replaceInstalled(tmp, dst, sums[dst])
+      if rok then
+        fixed = fixed + 1
+        io.write("FIXED " .. dst .. "\n")
+      else
+        io.stderr:write("  " .. dst .. ": " .. tostring(rerr) .. "\n")
+      end
+    end
+  end
+  io.write(string.format("Repaired %d of %d files.\n", fixed, #bad))
+  if kernelChanged(bad) then
+    io.write("Kernel or boot files changed: reboot to apply.\n")
+  end
+  return fixed == #bad and 0 or 1
 end
 
 return sysupdate

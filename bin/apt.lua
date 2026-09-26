@@ -35,6 +35,7 @@ local function normOpts()
     upgradable = raw.upgradable,
     all = raw.all,
     os = raw.os,
+    repair = raw.repair or raw.r,
   }
 end
 
@@ -66,6 +67,7 @@ local function usage()
     "Legacy OS update:",
     "  sysupdate [--source=URL] [--yes]",
     "  sysupgrade [--source=URL] [--yes] [--force]",
+    "  sysverify [--repair]    re-hash installed files, optionally refetch",
     "  sources --os",
   }
   for _, l in ipairs(lines) do io.write(l .. "\n") end
@@ -106,6 +108,9 @@ local function run()
   if cmd == "sysupgrade" then
     if freax.geteuid() ~= 0 then io.stderr:write("apt: sysupgrade requires root\n") return 1 end
     return require("sysupdate").upgrade(o)
+  end
+  if cmd == "sysverify" then
+    return require("sysupdate").verify(o)
   end
 
   if cmd == "version" then
