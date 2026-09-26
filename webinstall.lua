@@ -297,21 +297,43 @@ if not wok then
   return 1
 end
 
--- Masked line read that behaves the same on stock OpenOS and on Freax.
--- OpenOS's term.read is a "dobreak" read: finishing an empty line with the
--- dobreak key can return either that key's name (the literal "enter") or a
--- lone control character (\r), both echoed as a single mask star. Either
--- way an empty Enter hashes into a mystery password the operator can never
--- retype. Strip surrounding whitespace/control chars and treat the bare
--- dobreak key as an empty line.
+-- Password entry without term.read. OpenOS's dobreak read misbehaves here in
+-- several ways at once: an empty Enter can come back as the key's own name
+-- ("enter"), as a lone control char, or as keystrokes that belong to the
+-- next prompt, so passwords came out as mystery strings. Read raw key
+-- events instead: printable chars append (one mask star each), Enter
+-- (code 28) finishes, Backspace (code 14) deletes, everything else is
+-- ignored. A bare Enter therefore yields exactly "" on every OpenOS build.
 local function readPassword(prompt)
+  -- flush stale key events first, or a held Enter submits the prompt before
+  -- the operator can type (bounded so a hostile queue cannot spin forever)
+  for _ = 1, 64 do
+    local ok, sig = pcall(computer.pullSignal, 0)
+    if not ok or sig == nil then break end
+  end
   term.write(prompt)
-  local v = term.read(nil, true, nil, "*")
-  io.write("\n")
-  if v == nil then return "" end
-  v = v:match("^%s*(.-)%s*$") or ""
-  if v == "enter" or v == "return" then return "" end
-  return v
+  local buf = {}
+  while true do
+    local ev, _, char, code = computer.pullSignal("key_down")
+    if ev == "key_down" then
+      if code == 28 then
+        break
+      elseif code == 14 then
+        if #buf > 0 then
+          buf[#buf] = nil
+          term.write("\b \b")
+        end
+      elseif type(char) == "number" and char >= 32 then
+        local okCh, chStr = pcall(unicode.char, char)
+        if okCh and type(chStr) == "string" and chStr ~= "" then
+          buf[#buf + 1] = chStr
+          term.write("*")
+        end
+      end
+    end
+  end
+  term.write("\n")
+  return table.concat(buf)
 end
 
 local shadow = "root::\n"
