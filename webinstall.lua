@@ -298,14 +298,18 @@ if not wok then
 end
 
 -- Masked line read that behaves the same on stock OpenOS and on Freax.
--- OpenOS's term.read is a "dobreak" read: finishing the line with the dobreak
--- key can return that key's name instead of the typed text, so an empty
--- password prompt came back as the literal string "enter" and was hashed as
--- the root password. Treat a bare dobreak key as an empty line.
+-- OpenOS's term.read is a "dobreak" read: finishing an empty line with the
+-- dobreak key can return either that key's name (the literal "enter") or a
+-- lone control character (\r), both echoed as a single mask star. Either
+-- way an empty Enter hashes into a mystery password the operator can never
+-- retype. Strip surrounding whitespace/control chars and treat the bare
+-- dobreak key as an empty line.
 local function readPassword(prompt)
   term.write(prompt)
   local v = term.read(nil, true, nil, "*")
+  io.write("\n")
   if v == nil then return "" end
+  v = v:match("^%s*(.-)%s*$") or ""
   if v == "enter" or v == "return" then return "" end
   return v
 end
@@ -315,7 +319,6 @@ io.write("Set root password (press Enter for none, change later with passwd):\n"
 local pw = readPassword("Password: ")
 if pw ~= "" then
   local pw2 = readPassword("Retype: ")
-  io.write("\n")
   if pw ~= pw2 then
     io.write("Mismatch -- leaving root passwordless.\n")
   else
