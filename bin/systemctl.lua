@@ -13,6 +13,22 @@ local CTRL = "/run/systemd"
 local CMD_PFX = CTRL .. "/ctl"
 local RSP_PFX = CTRL .. "/rsp"
 
+local function readUnits()
+  local units = {}
+  for _, file in ipairs(fs.list("/etc/systemd") or {}) do
+    if file:match("%.unit$") and not fs.isDirectory("/etc/systemd/" .. file) then
+      local data = fs.readFile("/etc/systemd/" .. file) or ""
+      units[#units + 1] = {
+        name = file:sub(1, -6),
+        description = data:match("[Dd]escription%s*=%s*([^\n]+)"),
+        enabled = data:match("[Ee]nabled%s*=%s*([^\n]+)"),
+      }
+    end
+  end
+  table.sort(units, function(a, b) return a.name < b.name end)
+  return units
+end
+
 if not cmd or cmd == "help" or opts.help then
   io.write("Usage: systemctl <command> [name]\n")
   io.write("Commands:\n")
@@ -28,13 +44,9 @@ if not cmd or cmd == "help" or opts.help then
 end
 
 if cmd == "list-units" then
-  local list = fs.list("/etc/systemd") or {}
-  for _, f in ipairs(list) do
-    local data = fs.readFile("/etc/systemd/" .. f) or ""
-    local name = f:match("(.+)%.[^.]+$") or f
-    local desc = data:match("[Dd]escription%s*=%s*([^\n]+)")
-    local enabled = data:match("[Ee]nabled%s*=%s*([^\n]+)")
-    io.write(string.format("%-20s %-15s %s\n", name, enabled or "", desc or ""))
+  for _, unit in ipairs(readUnits()) do
+    io.write(string.format("%-20s %-15s %s\n", unit.name,
+      unit.enabled or "", unit.description or ""))
   end
   return
 end
@@ -42,6 +54,21 @@ end
 if freax.geteuid() ~= 0 then
   io.stderr:write("systemctl: " .. cmd .. " requires root\n")
   return 1
+end
+
+if cmd == "status" and not name then
+  local live = {}
+  for _, process in ipairs(freax.ps()) do
+    if not process.dead then live[process.name] = true end
+  end
+  local units = readUnits()
+  for _, unit in ipairs(units) do
+    io.write(string.format("%-16s %-8s %s (%s)\n", unit.name,
+      live[unit.name] and "running" or "stopped", unit.description or "",
+      unit.enabled == "yes" and "enabled" or "disabled"))
+  end
+  if #units == 0 then io.write("no units loaded\n") end
+  return 0
 end
 
 if cmd == "daemon-reload" then cmd, name = "reload", "systemd" end

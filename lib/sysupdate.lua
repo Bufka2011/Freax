@@ -1,9 +1,6 @@
--- sysupdate: manifest-based Freax OS self-updater (legacy apt path).
--- Extracted from the original bin/apt.lua so `apt sysupdate` / `apt
--- sysupgrade` keep updating the running OS from /manifest while the new
--- package manager handles third-party packages.
--- Pulls core OS files over HTTP so you never leave the game to update:
--- no world restart, just `apt sysupdate`, `apt sysupgrade`, `reboot`.
+-- sysupdate: manifest-based Freax OS updater behind the virtual `sys` package.
+-- `apt update` refreshes release data; `apt upgrade` applies it alongside
+-- third-party package upgrades.
 -- Repo root mirrors the installed root (/), so each manifest entry maps
 -- to <source><path>. Streaming 4K (never hold a whole file in RAM),
 -- temp + rename (no half-written files), accounts/config preserved.
@@ -444,7 +441,7 @@ function sysupdate.upgrade(opts)
   -- compare instead of re-hashing every file.
   local lsums = parseSums(fs.readFile("/SHA256SUMS"))
   local haveLocal = next(lsums) ~= nil
-  -- Changed set cached by `apt sysupdate`: avoids re-hashing every file.
+  -- Changed set cached by `apt update`: avoids re-hashing every file.
   local changedSet = nil
   if sums then
     local ctext = fs.readFile(CACHE_CHANGED)
@@ -459,6 +456,7 @@ function sysupdate.upgrade(opts)
       end
     end
   end
+  if opts.force or opts.f then changedSet = nil end
   if remote == "unknown" then
     io.stderr:write("apt: cannot determine remote version, aborting.\n")
     return 1
@@ -469,7 +467,15 @@ function sysupdate.upgrade(opts)
   end
   -- Report what will actually be fetched, not the whole manifest size.
   local toFetch
-  if changedSet then
+  if opts.force or opts.f then
+    toFetch = 0
+    for _, dst in ipairs(files) do
+      if not (SKIP_DEV[dst] or PRESERVE[dst]) and dst ~= "/SHA256SUMS"
+        and not (dst == "/etc/apt/sources.list" and fs.exists(dst)) then
+        toFetch = toFetch + 1
+      end
+    end
+  elseif changedSet then
     toFetch = 0
     for _ in pairs(changedSet) do toFetch = toFetch + 1 end
   elseif haveLocal then
@@ -507,7 +513,9 @@ function sysupdate.upgrade(opts)
     else
       local want = sums and sums[dst]
       local needs
-      if changedSet then
+      if opts.force or opts.f then
+        needs = true
+      elseif changedSet then
         needs = changedSet[dst] and true or false
       elseif haveLocal then
         needs = not fs.exists(dst) or lsums[dst] ~= want
@@ -589,7 +597,7 @@ function sysupdate.verify(opts)
   if not needNet() then return 1 end
   local text = fs.readFile("/SHA256SUMS")
   if not text then
-    io.stderr:write("apt: no /SHA256SUMS recorded; run `apt sysupdate` first.\n")
+    io.stderr:write("apt: no /SHA256SUMS recorded; run `apt update` first.\n")
     return 1
   end
   local sums = parseSums(text)
@@ -612,11 +620,11 @@ function sysupdate.verify(opts)
   end
   io.write(string.format("%d of %d files differ.\n", #bad, #names))
   if not (opts.repair or opts.r) then
-    io.write("Run `apt sysverify --repair` to re-download them.\n")
+    io.write("Run `apt verify --repair` to re-download them.\n")
     return 1
   end
   if freax.geteuid() ~= 0 then
-    io.stderr:write("apt: sysverify --repair requires root\n")
+    io.stderr:write("apt: verify --repair requires root\n")
     return 1
   end
   local src = sysupdate.effectiveSource(opts)
