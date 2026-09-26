@@ -21,6 +21,8 @@ features rather than duplicating that status here.
 
 - `manifest` is the single shipped-file list used by the installer, the `sys`
   updater, and demo-mode protection. Add every new shipped file there.
+- `apt/` is hosted package-repository content, not installed OS content; do not
+  add its indexes or archives to `manifest`.
 - `bin/install.lua` and `lib/sysupdate.lua` skip dev-only manifest entries
   (`.gitignore`, `README.md`, `mksums.lua`);
   `/etc/hostname` is machine-local. `/etc/passwd` and `/etc/shadow` are
