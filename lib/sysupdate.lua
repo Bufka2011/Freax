@@ -15,6 +15,7 @@ local sysupdate = {}
 local lastSummary
 
 local DEFAULT_SOURCE = "https://raw.githubusercontent.com/Bufka2011/Freax/main/"
+local DEFAULT_REF = "https://api.github.com/repos/Bufka2011/Freax/git/ref/heads/main"
 local CACHE_DIR = "/tmp/apt"
 local CACHE_MANIFEST = CACHE_DIR .. "/manifest"
 local CACHE_VERSION = CACHE_DIR .. "/VERSION"
@@ -142,6 +143,17 @@ local function fetchToFile(url, tmp)
   return true
 end
 
+local function resolvedSource(opts)
+  local src = sysupdate.effectiveSource(opts)
+  if src ~= DEFAULT_SOURCE then return src end
+  local ref = fetchText(DEFAULT_REF)
+  local commit = ref and ref:match('"sha"%s*:%s*"([0-9a-f]+)"')
+  if commit and #commit == 40 then
+    return "https://raw.githubusercontent.com/Bufka2011/Freax/" .. commit .. "/"
+  end
+  return src
+end
+
 local function parseManifest(data)
   local out, seen = {}, {}
   for line in (tostring(data or "") .. "\n"):gmatch("(.-)\n") do
@@ -258,7 +270,7 @@ end
 
 function sysupdate.update(opts)
   if not needNet() then return 1 end
-  local src = sysupdate.effectiveSource(opts)
+  local src = resolvedSource(opts)
   fs.remove(CACHE_CHANGED)
   io.write("Source: " .. src .. "\n")
   io.write("Checking version... ")
@@ -401,7 +413,7 @@ end
 
 function sysupdate.upgrade(opts)
   if not needNet() then return 1 end
-  local src = sysupdate.effectiveSource(opts)
+  local src = resolvedSource(opts)
   local man = fs.readFile(CACHE_MANIFEST)
   if not man then
     io.write("No cache, fetching manifest... ")
@@ -627,7 +639,7 @@ function sysupdate.verify(opts)
     io.stderr:write("apt: verify --repair requires root\n")
     return 1
   end
-  local src = sysupdate.effectiveSource(opts)
+  local src = resolvedSource(opts)
   local fixed = 0
   for _, dst in ipairs(bad) do
     local tmp = dst .. ".apt-new"
