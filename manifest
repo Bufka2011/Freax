@@ -27,6 +27,7 @@ bin/head.lua
 bin/hello.lua
 bin/hostname.lua
 bin/install.lua
+bin/kill.lua
 bin/label.lua
 bin/less.lua
 bin/list.lua
@@ -155,6 +156,7 @@ usr/man/grep
 usr/man/head
 usr/man/hostname
 usr/man/install
+usr/man/kill
 usr/man/label
 usr/man/less
 usr/man/ln

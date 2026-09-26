@@ -78,7 +78,11 @@ features rather than duplicating that status here.
 - Keep the setuid surface limited to `/bin/su.lua` and `/bin/passwd.lua`.
   Sessions are created with `freax.spawnAs`; normal exec resets effective IDs.
 - Mounting, machine controls, and `spawnAs` are root-only. `kill` and `wait`
-  require root or matching UID.
+  require root or matching UID. `kill` accepts `TERM` (default, exit 143),
+  `KILL` (137), `INT` (130), `STOP`/`CONT`, `0` (existence check), or a signal
+  number; a negative id targets the whole process group. Each spawn leads a
+  new group unless the caller passes an explicit `pgid`; `freax.waitGroup`
+  reaps any child in a group. Stopped processes take no scheduler CPU.
 
 ## Memory Constraints
 

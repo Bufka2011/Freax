@@ -28,6 +28,7 @@ function process.info(pid)
     command = i.name,
     path = "/bin/" .. i.name,
     parent = i.parent,
+    pgid = i.pgid,
     uid = i.uid, euid = i.euid, gid = i.gid, egid = i.egid,
     data = data,
   }
@@ -98,6 +99,7 @@ process.list = setmetatable({}, {
         command = p.name,
         path = "/bin/" .. p.name,
         parent = p.parent,
+        pgid = p.pgid,
         uid = p.uid, euid = p.euid, gid = p.gid, egid = p.egid,
         data = data,
       }

@@ -1,0 +1,30 @@
+NAME
+  kill - send a signal to a process or process group
+
+SYNOPSIS
+  kill [-s SIGNAL | -SIGNAL] PID...
+
+DESCRIPTION
+  Sends SIGNAL (default TERM) to each PID. A negative id targets
+  the process group with that pgid, POSIX kill(-pgid) style.
+
+  Signals: TERM, KILL, INT, STOP, CONT, 0 (check existence only),
+  or a signal number. TERM exits 143, KILL 137, INT 130.
+  STOP suspends a process (scheduler takes no CPU for it); CONT
+  resumes it. Only root or the same uid may signal a process.
+
+EXAMPLES
+  kill 42
+    Terminate pid 42.
+
+  kill -KILL 42
+    Kill pid 42 immediately.
+
+  kill -0 42
+    Check pid 42 exists.
+
+  kill -- -7
+    Terminate every process in group 7.
+
+SEE ALSO
+  ps, jobs, wait

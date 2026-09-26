@@ -88,10 +88,36 @@ builtins.wait = function(pid)
   end
 end
 
-builtins.kill = function(pid)
-  if not pid then io.write("usage: kill PID\n") return 1 end
-  local ok, err = freax.kill(tonumber(pid) or -1)
-  if not ok then io.write("kill: " .. tostring(err) .. "\n") return 1 end
+builtins.kill = function(...)
+  local argv, sig = table.pack(...), nil
+  local targets = {}
+  local i = 1
+  while i <= argv.n do
+    local a = tostring(argv[i])
+    if a == "-s" or a == "--signal" then
+      sig = argv[i + 1]
+      i = i + 2
+    elseif a:match("^%-[A-Za-z]") and not a:match("^%-%d+$") then
+      sig = a:sub(2)
+      i = i + 1
+    elseif a == "--" then
+      i = i + 1
+      break
+    else
+      targets[#targets + 1] = a
+      i = i + 1
+    end
+  end
+  while i <= argv.n do targets[#targets + 1] = tostring(argv[i]) i = i + 1 end
+  if #targets == 0 then io.write("usage: kill [-s SIGNAL | -SIGNAL] PID...\n") return 1 end
+  local code = 0
+  for _, t in ipairs(targets) do
+    -- Negative ids target a process group (kill(-pgid)); the kernel
+    -- enforces same-uid-or-root either way.
+    local ok, err = freax.kill(tonumber(t) or 0, sig)
+    if not ok then io.write("kill: " .. tostring(t) .. ": " .. tostring(err) .. "\n") code = 1 end
+  end
+  return code
 end
 
 builtins.source = function(path)

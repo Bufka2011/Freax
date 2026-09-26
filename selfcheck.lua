@@ -89,6 +89,28 @@ check("kill-unknown", freax.kill(99999) == nil)
 check("getuid", type(freax.getuid) == "function" and type(freax.getuid()) == "number")
 check("geteuid", type(freax.geteuid) == "function" and type(freax.geteuid()) == "number")
 
+-- process groups and signals: fresh spawns lead their own group
+check("pgid-fns", type(freax.getpgid) == "function" and type(freax.setpgid) == "function")
+local selfPid = freax.getpid()
+check("pgid-self", freax.getpgid() == selfPid)
+check("setpgid-self", freax.setpgid(selfPid, selfPid) == true)
+check("kill-exists", freax.kill(selfPid, 0) == true)
+check("kill-group-exists", freax.kill(-selfPid, 0) == true)
+local sleeper = freax.spawn("sc-sleep", "/bin/sleep.lua", {"30"})
+check("spawn-sleeper", type(sleeper) == "number")
+if sleeper then
+  check("pgid-child", freax.getpgid(sleeper) == sleeper)
+  check("stop-child", freax.kill(sleeper, "STOP") == true)
+  local stoppedSeen = false
+  for _, p in ipairs(freax.ps()) do
+    if p.pid == sleeper and (p.stopped or p.state == "stopped") then stoppedSeen = true end
+  end
+  check("stopped-state", stoppedSeen)
+  check("cont-child", freax.kill(sleeper, "CONT") == true)
+  check("kill-term", freax.kill(sleeper, "TERM") == true)
+  check("wait-term", freax.wait(sleeper) == 143)
+end
+
 -- credential boundary: a UID 1000 session must be confined to its home and
 -- /tmp/u1000, must not read /etc/shadow, write /etc, mount, or kill PID 1.
 if freax.geteuid() ~= 0 or type(freax.spawnAs) ~= "function" then

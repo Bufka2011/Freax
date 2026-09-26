@@ -1356,8 +1356,10 @@ local function makeEnv(p)
     coroutine.yield()          -- never returns; scheduler reaps us
   end
 
-  function freax.spawn(name, path, args)
-    return K.spawn(name, path, args, nil, myInh())
+  function freax.spawn(name, path, args, pgid)
+    local inh = myInh()
+    if tonumber(pgid) then inh.pgid = tonumber(pgid) end
+    return K.spawn(name, path, args, nil, inh)
   end
 
   function freax.spawnAs(name, path, args, uid, gid, home)
@@ -1373,10 +1375,12 @@ local function makeEnv(p)
   function freax.ps()
     local out = {}
     for _, q in ipairs(procs) do
-      local state = q.dead and "dead" or q.pipeWait and "pipe"
+      local state = q.dead and "dead" or q.stopped and "stopped"
+        or q.pipeWait and "pipe"
         or q.waitingFor and "wait" or q.started and "run" or "new"
       out[#out + 1] = { pid = q.pid, name = q.name, dead = q.dead or false,
-        parent = q.parent, uid = q.uid, euid = q.euid,
+        parent = q.parent, pgid = q.pgid, stopped = q.stopped or false,
+        uid = q.uid, euid = q.euid,
         gid = q.gid, egid = q.egid, state = state,
         events = #q.queue, startedAt = q.startedAt, cwd = q.cwd }
     end
@@ -1979,20 +1983,131 @@ local function makeEnv(p)
   end
   -- Spawn with redirected stdio: fds (pipes) or {path, mode} specs.
   -- (myInh is defined once near the top of makeEnv.)
-  function freax.spawnIO(name, path, args, inFd, outFd, errFd)
-    return K.spawn(name, path, args, { in_ = inFd, out = outFd, err = errFd }, myInh())
+  function freax.spawnIO(name, path, args, inFd, outFd, errFd, pgid)
+    local inh = myInh()
+    if tonumber(pgid) then inh.pgid = tonumber(pgid) end
+    return K.spawn(name, path, args, { in_ = inFd, out = outFd, err = errFd }, inh)
   end
   function freax.myInfo()
     return { pid = p.pid, name = p.name, vars = p.vars, parent = p.parent,
+      pgid = p.pgid, stopped = p.stopped or false,
       uid = p.uid, euid = p.euid, gid = p.gid, egid = p.egid }
   end
-  function freax.kill(pid)
+  function freax.getpgid(pid)
+    pid = tonumber(pid) or p.pid
+    for _, q in ipairs(procs) do
+      if q.pid == pid then return q.pgid end
+    end
+    return nil, "no such process"
+  end
+  -- Move a process to a group. POSIX allows the parent to set the
+  -- child's group (and a process its own); same rule here, root or
+  -- same uid. Only to an existing group or the pid itself (new group).
+  function freax.setpgid(pid, pgid)
+    pid, pgid = tonumber(pid) or p.pid, tonumber(pgid)
+    if not pgid then return nil, "bad pgid" end
+    for _, q in ipairs(procs) do
+      if q.pid == pid then
+        if q.pid ~= p.pid and q.parent ~= p.pid
+          and not isRoot(p) then return nil, "not a child" end
+        if not isRoot(p) and p.uid ~= q.uid and p.euid ~= q.uid then
+          return denied()
+        end
+        local okGroup = pgid == q.pid
+        if not okGroup then
+          for _, r in ipairs(procs) do
+            if r.pgid == pgid then okGroup = true break end
+          end
+        end
+        if not okGroup then return nil, "no such process group" end
+        q.pgid = pgid
+        return true
+      end
+    end
+    return nil, "no such process"
+  end
+  -- Wait for any child in a process group. Returns pid, exit code.
+  function freax.waitGroup(pgid)
+    pgid = tonumber(pgid)
+    if not pgid then return nil, "bad pgid" end
+    for pid, done in pairs(exited) do
+      if (done.parent == p.pid or isRoot(p)) and done.pgid == pgid then
+        exited[pid] = nil
+        return pid, done.code
+      end
+    end
+    p.waitingFor = -pgid
+    while true do
+      for _, q in ipairs(procs) do
+        if q.pgid == pgid and (q.parent == p.pid or isRoot(p)) then
+          if q.dead then
+            q.reaped = true
+            local code = q.exitCode or 0
+            local reaped = exited[q.pid]
+            if reaped then code, exited[q.pid] = reaped.code, nil end
+            p.waitingFor = nil
+            return q.pid, code
+          end
+        end
+      end
+      local any = false
+      for _, q in ipairs(procs) do
+        if q.pgid == pgid and not q.dead then any = true break end
+      end
+      if not any then p.waitingFor = nil return nil, "no such process group" end
+      coroutine.yield()
+    end
+  end
+  local signalCodes = { TERM = 143, KILL = 137, INT = 130,
+    [15] = 143, [9] = 137, [2] = 130 }
+  local function signalOp(q, sig)
+    if sig == 0 or sig == "0" then return true end -- existence check
+    if sig == "STOP" or sig == 19 or sig == "TSTP" or sig == 20 then
+      if q.pid == 1 then return nil, "cannot stop init" end
+      q.stopped = true
+      return true
+    end
+    if sig == "CONT" or sig == 18 then
+      q.stopped = false
+      return true
+    end
+    local code = signalCodes[sig] or signalCodes[tostring(sig):upper()]
+    if code == nil then
+      if tonumber(sig) then code = 128 + tonumber(sig) else
+        return nil, "unknown signal"
+      end
+    end
+    q.stopped = false
+    q.dead = true
+    if not q.exitCode then q.exitCode = code end
+    return true
+  end
+  function freax.kill(pid, sig)
+    pid = tonumber(pid)
+    if not pid then return nil, "bad pid" end
+    sig = sig == nil and "TERM" or sig
+    -- Negative pid targets a process group (POSIX kill(-pgid)).
+    if pid < 0 then
+      local pgid, any, deniedAny = -pid, false, false
+      for _, q in ipairs(procs) do
+        if q.pgid == pgid and not q.dead then
+          if not isRoot(p) and p.uid ~= q.uid and p.euid ~= q.uid then
+            deniedAny = true
+          else
+            local ok, err = signalOp(q, sig)
+            if ok then any = true
+            elseif err == "cannot stop init" then deniedAny = true end
+          end
+        end
+      end
+      if any then return true end
+      if deniedAny then return denied() end
+      return nil, "no such process group"
+    end
     for _, q in ipairs(procs) do
       if q.pid == pid then
         if not isRoot(p) and p.uid ~= q.uid and p.euid ~= q.uid then return denied() end
-        q.dead = true
-        if not q.exitCode then q.exitCode = 143 end -- 128 + SIGTERM
-        return true
+        return signalOp(q, sig)
       end
     end
     return nil, "no such process"
@@ -2561,11 +2676,15 @@ function K.spawn(name, path, args, stdio, inh)
   if execAbs == "/bin/su.lua" or execAbs == "/bin/passwd.lua" then euid = 0 end
   local p = {
     pid = nextPid, name = name,
-    queue = {}, started = false, dead = false,
-    -- children inherit cwd + env vars (like a real fork/exec)
+    queue = {}, started = false, dead = false, stopped = false,
+    -- children inherit cwd + env vars (like a real fork/exec).
+    -- process groups are NOT inherited: each spawn leads its own
+    -- group unless inh.pgid explicitly joins it to one (pipelines,
+    -- job control). The group leader's pgid equals its pid.
     cwd = cwd,
     vars = inh and inh.vars,
     parent = inh and inh.parent,
+    pgid = (inh and tonumber(inh.pgid)) or nextPid,
     uid = uid, euid = euid, gid = gid, egid = egid,
     home = (inh and inh.home) or "/",
     startedAt = computer.uptime(),
@@ -2722,7 +2841,8 @@ function K.loop()
       local p = procs[i]
       if p.dead then
         if not p.reaped then
-          exited[p.pid] = { code = p.exitCode or 0, parent = p.parent }
+          exited[p.pid] = { code = p.exitCode or 0, parent = p.parent,
+            pgid = p.pgid }
           exitedOrder[#exitedOrder + 1] = p.pid
           if #exitedOrder > 64 then
             local old = table.remove(exitedOrder, 1)
@@ -2743,6 +2863,12 @@ function K.loop()
             p.queue[#p.queue + 1] = sig
           end
           ok, err = coroutine.resume(p.co)
+        elseif p.stopped then
+          -- suspended by STOP: take no CPU, but hold non-key input
+          -- (typeahead) so it is there on CONT.
+          if hasSig and not isKeySig(sig) then
+            p.queue[#p.queue + 1] = sig
+          end
         elseif p.waitingFor or p.pipeWait then
           -- foreground wait / pipe block: poll every tick.
           -- waiters still queue non-key input (typeahead); pipe blocks
