@@ -297,12 +297,24 @@ if not wok then
   return 1
 end
 
+-- Masked line read that behaves the same on stock OpenOS and on Freax.
+-- OpenOS's term.read is a "dobreak" read: finishing the line with the dobreak
+-- key can return that key's name instead of the typed text, so an empty
+-- password prompt came back as the literal string "enter" and was hashed as
+-- the root password. Treat a bare dobreak key as an empty line.
+local function readPassword(prompt)
+  term.write(prompt)
+  local v = term.read(nil, true, nil, "*")
+  if v == nil then return "" end
+  if v == "enter" or v == "return" then return "" end
+  return v
+end
+
 local shadow = "root::\n"
-io.write("Set root password (empty = none, change later with passwd): ")
-local pw = term.read(nil, true, nil, "*") or ""
+io.write("Set root password (press Enter for none, change later with passwd):\n")
+local pw = readPassword("Password: ")
 if pw ~= "" then
-  io.write("\nRetype: ")
-  local pw2 = term.read(nil, true, nil, "*") or ""
+  local pw2 = readPassword("Retype: ")
   io.write("\n")
   if pw ~= pw2 then
     io.write("Mismatch -- leaving root passwordless.\n")
@@ -319,6 +331,9 @@ if pw ~= "" then
       io.write("No sha256 on target -- root stays passwordless.\n")
     end
   end
+end
+if shadow == "root::\n" then
+  io.write("Note: root has NO password. Set one with `passwd` after login.\n")
 end
 if not writeFile(target.path .. "/etc/shadow", shadow)
   or not writeFile(target.path .. "/etc/hostname", "freax\n") then
@@ -361,10 +376,20 @@ pcall(target.dev.setLabel, label)
 io.write("Label: " .. label .. "\n")
 
 if not opts.nosetboot then
-  if computer.setBootAddress(target.addr) then
-    io.write("Boot address set to " .. target.addr:sub(1, 8) .. "\n")
+  -- computer.setBootAddress returns nothing on success in OC, so only a
+  -- thrown error or an explicit false is a failure. The old truthiness test
+  -- reported "could not set boot address" on every successful install.
+  local called, res = pcall(computer.setBootAddress, target.addr)
+  if not called then
+    io.stderr:write("webinstall: could not set boot address: " ..
+      tostring(res) .. "\n")
+    io.write("Set it manually later with the `flash` command, or boot\n")
+    io.write("this drive explicitly.\n")
+  elseif res == false then
+    io.stderr:write("webinstall: setBootAddress was rejected (read-only EEPROM?)\n")
+    io.write("Set it manually later with the `flash` command.\n")
   else
-    io.stderr:write("webinstall: could not set boot address\n")
+    io.write("Boot address set to " .. target.addr:sub(1, 8) .. "\n")
   end
 end
 
