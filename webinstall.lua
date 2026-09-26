@@ -19,6 +19,7 @@ local fs = require("filesystem")
 local internet = require("internet")
 local shell = require("shell")
 local term = require("term")
+local unicode = require("unicode")
 
 local DEFAULT_SOURCE = "https://raw.githubusercontent.com/Bufka2011/Freax/main/"
 local USER_AGENT = "Freax/WebInstall"
@@ -314,7 +315,10 @@ local function readPassword(prompt)
   term.write(prompt)
   local buf = {}
   while true do
-    local ev, _, char, code = computer.pullSignal("key_down")
+    -- computer.pullSignal takes an optional numeric timeout, not an event
+    -- filter: passing "key_down" raises "bad argument #1 (number or nil
+    -- expected, got string)". Block for any event and ignore non-keys.
+    local ev, _, char, code = computer.pullSignal()
     if ev == "key_down" then
       if code == 28 then
         break
