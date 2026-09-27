@@ -1,9 +1,14 @@
 FREAX CHANGELOG
 ===============
 
-This history was reconstructed from all 135 Git commits through 1.08. Freax
-has no Git release tags, so sections follow VERSION changes and release commits.
-Unversioned commits are grouped into the release they built or repaired.
+Freax release history, newest first. Entries follow VERSION bumps; the
+version number is the single source of truth in the VERSION file.
+
+The 0.5 through 1.08 sections were reconstructed from the complete Git history
+of that period. Freax has no Git release tags, so sections follow VERSION
+changes and release commits, and unversioned commits are grouped into the
+release they built or repaired. Later sections are written as each release
+ships.
 
 
 1.10 - 2026-09-26
