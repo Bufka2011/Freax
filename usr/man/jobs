@@ -1,0 +1,56 @@
+NAME
+  jobs, fg, bg - shell job control
+
+SYNOPSIS
+  jobs
+  fg [%JOB]
+  bg [%JOB]
+  wait [%JOB]
+
+DESCRIPTION
+  A command started with a trailing '&' runs in the background and becomes a
+  numbered job. Every stage of a background pipeline shares one process group,
+  so a job is signalled, suspended, or resumed as a unit.
+
+  jobs lists the jobs the shell still tracks with their state (running or
+  stopped) and the pids that are still alive. Finished jobs are reported once
+  at the next prompt and then dropped. The table is bounded; when it is full of
+  running jobs a new background job is refused instead of losing track of a
+  live one.
+
+  fg resumes a stopped job in the foreground and waits for it. The job owns the
+  terminal while it runs, so Ctrl+C interrupts it and Ctrl+Z suspends it again.
+
+  bg resumes a stopped job in the background.
+
+  wait blocks until the selected job terminates, or until every tracked job has
+  terminated when no argument is given. A suspended job reports status 148
+  (128 + SIGTSTP) instead of blocking forever.
+
+  %JOB is one of:
+    %n       job number
+    %+       most recent job
+    %-       the job before %+
+    %prefix  first job whose command text starts with prefix
+
+  Only the shell can see its own jobs. A job started by a script is tracked by
+  that script's shell, so `wait` works there but prints no job notice.
+
+EXAMPLES
+  sleep 300 &
+    Start a background job and print its number.
+
+  jobs
+    List background jobs.
+
+  fg %1
+    Continue job 1 in the foreground.
+
+  bg %1
+    Continue job 1 in the background.
+
+  wait %1
+    Block until job 1 exits.
+
+SEE ALSO
+  sh, kill, ps

@@ -183,6 +183,8 @@ end
 local function positional(context, key)
   if not context then return nil end
   if key == "#" then return tostring(#(context.args or {})) end
+  -- $! is the process group of the most recent background job.
+  if key == "!" then return tostring(context.lastBackground or "") end
   if key == "@" or key == "*" then
     local sep = (os.getenv("IFS") or " "):sub(1, 1)
     return table.concat(context.args or {}, sep ~= "" and sep or " ")
@@ -199,7 +201,7 @@ function sh.expand(value, context)
   :gsub("%$(%d)", function(key)
     return positional(context, key) or ""
   end)
-  :gsub("%$([%?%#%@%*])", function(key)
+  :gsub("%$([%?%#%@%*!])", function(key)
     if key == "?" then
       return tostring(sh.getLastExitCode())
     end
@@ -342,7 +344,7 @@ end
 
 -- Run a registered builtin in-process. Redirects are applied to the
 -- process io table (io.input/output/error) and restored afterwards.
--- Returns command_passed(...) plus an optional reason, like executePipes.
+-- Returns the builtin's status plus an optional reason, like executePipes.
 function sh.internal.runBuiltin(name, args, redirects)
   local builtin = sh.internal.builtins[name]
   if not builtin then return false, name .. ": not a builtin" end
@@ -381,6 +383,8 @@ function sh.internal.runBuiltin(name, args, redirects)
     end
   end
 
+  -- pcall keeps a failing builtin (including the blocking fg/wait) from
+  -- corrupting the shell, and guarantees redirects are restored.
   local result = table.pack(pcall(builtin, table.unpack(args)))
   restore()
   if not result[1] then return false, tostring(result[2]) end
@@ -388,7 +392,11 @@ function sh.internal.runBuiltin(name, args, redirects)
   return result[2], result[3]
 end
 
-function sh.internal.executePipes(pipe_parts, eargs, env)
+-- Set by the shell front-end to receive background job information
+-- ({pgid = ..., pids = {...}}) right after a background job is started.
+sh.internal.onBackground = nil
+
+function sh.internal.executePipes(pipe_parts, eargs, env, background)
   local stages = {}
   for _, words in ipairs(pipe_parts) do
     local args, redirects = sh.internal.evaluate(words, env)
@@ -411,7 +419,24 @@ function sh.internal.executePipes(pipe_parts, eargs, env)
   end
 
   local pids, owned = {}, {}
-  local prev_r
+  local prev_r, pgid
+  -- A background job must not consume terminal input: give its first stage a
+  -- pipe whose write end is already closed, so stdin reads return EOF. /dev/null
+  -- is not available yet (devfs ships no nodes).
+  local backgroundIn
+  if background and freax.pipe and freax.fsClose then
+    local rfd, wfd = freax.pipe()
+    if rfd and wfd then
+      freax.fsClose(wfd)
+      local rh = freax.wrapFd(rfd)
+      if rh then
+        owned[#owned + 1] = rh
+        backgroundIn = rfd
+      else
+        freax.fsClose(rfd)
+      end
+    end
+  end
   for i, st in ipairs(stages) do
     local name = table.remove(st.args, 1)
     if not name then
@@ -421,10 +446,14 @@ function sh.internal.executePipes(pipe_parts, eargs, env)
     end
 
     if sh.internal.builtins[name] then
-      if #stages > 1 then
+      -- A builtin has no process of its own, so it cannot join a pipeline or
+      -- a background job without a subshell (not implemented).
+      if #stages > 1 or background then
         closeOwned(owned)
         waitAll(pids)
-        return false, name .. ": builtin in pipeline unsupported"
+        return false, name .. (background
+          and ": background builtin unsupported"
+          or ": builtin in pipeline unsupported")
       end
       closeOwned(owned)
       waitAll(pids)
@@ -452,7 +481,7 @@ function sh.internal.executePipes(pipe_parts, eargs, env)
     end
 
     local fds, reason = sh.internal.openCommandRedirects(st.redirects, {
-      in_ = prev_r, out = outFd, err = nil,
+      in_ = prev_r or backgroundIn, out = outFd, err = nil,
     }, owned)
     if not fds then
       closeOwned(owned)
@@ -460,19 +489,41 @@ function sh.internal.executePipes(pipe_parts, eargs, env)
       return false, reason
     end
 
-    local pid, err = freax.spawnIO(name, path, st.args, fds[0], fds[1], fds[2])
+    -- Every stage joins the first stage's group so signals (Ctrl+C, Ctrl+Z,
+    -- kill) and waitGroup address the pipeline as one job.
+    local pid, err = freax.spawnIO(name, path, st.args, fds[0], fds[1], fds[2], pgid)
     if not pid then
       closeOwned(owned)
       waitAll(pids)
       return false, err
     end
+    if not pgid then pgid = pid end
     pids[#pids + 1] = pid
     prev_r = next_r
   end
 
   -- children hold their own dups; closing ours lets downstream readers EOF
   closeOwned(owned)
-  return waitAll(pids)
+
+  if background then
+    -- $! is the last process of the pipeline, as in POSIX shells.
+    if type(env) == "table" then env.lastBackground = pids[#pids] end
+    local report = sh.internal.onBackground
+    if report then report({ pgid = pgid, pids = pids }) end
+    return 0
+  end
+
+  -- Claim the terminal only when it is free: a nested shell (sh inside sh,
+  -- `source`) must not steal the outer shell's foreground group.
+  if pgid and freax.setForeground and freax.getForeground
+    and freax.getForeground() == nil then
+    freax.setForeground(pgid)
+  end
+  local code = waitAll(pids)
+  if pgid and freax.setForeground then
+    freax.setForeground(nil)
+  end
+  return code
 end
 
 -------------------------------------------------------------------------------
@@ -767,7 +818,44 @@ function sh.internal.remove_negation(chain)
   return false
 end
 
-function sh.internal.execute_complex(words, eargs, env)
+-- Split a command list on a standalone unquoted '&' (background operator).
+-- Returns nil when there is none, so ordinary command lists keep the exact
+-- previous execution path. Otherwise a list of {words = ..., background = bool}.
+function sh.internal.splitJobs(words)
+  local found
+  for _, w in ipairs(words) do
+    if isWordOf(w, {"&"}) then found = true break end
+  end
+  if not found then return nil end
+
+  local jobs, current = {}, {}
+  for _, w in ipairs(words) do
+    -- ';' ends a foreground command, '&' ends a background one. A trailing
+    -- command without a terminator runs in the foreground.
+    if isWordOf(w, {";"}) then
+      if #current > 0 then
+        jobs[#jobs + 1] = { words = current, background = false }
+        current = {}
+      end
+    elseif isWordOf(w, {"&"}) then
+      if #current > 0 then
+        jobs[#jobs + 1] = { words = current, background = true }
+        current = {}
+      end
+    else
+      current[#current + 1] = w
+    end
+  end
+  if #current > 0 then
+    jobs[#jobs + 1] = { words = current, background = false }
+  end
+  return jobs
+end
+
+-- Run one command list (';'-separated statements, '&&'/'||' chains, pipelines).
+-- `background` applies to the last command of the last statement, matching
+-- shell rules for "a && b &".
+function sh.internal.runStatements(words, eargs, env, background)
   -- we shall validate pipes before any statement execution
   local statements = sh.internal.splitStatements(words)
   for i = 1, #statements do
@@ -781,12 +869,28 @@ function sh.internal.execute_complex(words, eargs, env)
     local last_code, reason = sh.internal.boolean_executor(chains, function(chain, chain_index)
       local pipe_parts = sh.internal.splitChains(chain)
       local next_args = chain_index == #chains and si == #statements and eargs or {}
-      return sh.internal.executePipes(pipe_parts, next_args, env)
+      local bg = background and si == #statements and chain_index == #chains
+      return sh.internal.executePipes(pipe_parts, next_args, env, bg)
     end)
     if last_code == nil then return nil, reason end
     sh.internal.ec.last = sh.internal.command_result_as_code(last_code, reason)
   end
   return sh.internal.ec.last == 0
+end
+
+function sh.internal.execute_complex(words, eargs, env)
+  local jobs = sh.internal.splitJobs(words)
+  if not jobs then
+    return sh.internal.runStatements(words, eargs, env, false)
+  end
+  local result
+  for i, job in ipairs(jobs) do
+    local r, why = sh.internal.runStatements(job.words,
+      i == #jobs and eargs or {}, env, job.background)
+    if r == nil then return nil, why end
+    result = r
+  end
+  return result
 end
 
 -- params: words[tokenized word list]

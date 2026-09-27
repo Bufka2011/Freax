@@ -2,11 +2,14 @@ NAME
   kill - send a signal to a process or process group
 
 SYNOPSIS
-  kill [-s SIGNAL | -SIGNAL] PID...
+  kill [-s SIGNAL | -SIGNAL] %JOB | PID...
 
 DESCRIPTION
   Sends SIGNAL (default TERM) to each PID. A negative id targets
   the process group with that pgid, POSIX kill(-pgid) style.
+
+  A %JOB reference (%1, %+, %-, %prefix) signals the whole process group of a
+  shell job, which is the usual way to stop a background pipeline.
 
   Signals: TERM, KILL, INT, STOP, CONT, 0 (check existence only),
   or a signal number. TERM exits 143, KILL 137, INT 130.
@@ -26,5 +29,11 @@ EXAMPLES
   kill -- -7
     Terminate every process in group 7.
 
+  kill %1
+    Terminate the process group of shell job 1.
+
+  kill -CONT %1
+    Resume a suspended job.
+
 SEE ALSO
-  ps, jobs, wait
+  ps, jobs, fg, bg, wait

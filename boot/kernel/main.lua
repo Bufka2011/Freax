@@ -45,6 +45,11 @@ local termSt = { cx = 1, cy = 1, hist = {}, histPos = 0,
 -- foreground-process-group style. At the shell prompt the set is empty, so
 -- Ctrl+C just cancels the current input line (see ttyReadLine).
 local ctrlDown = false
+-- `foreground` also carries, under the reserved "fg" key, the terminal
+-- foreground process group claimed by the shell for job control. Ctrl+C and
+-- Ctrl+Z target that group only; a nil "fg" means no foreground job, so the
+-- key falls through to the line editor. "fg" is a string key and never
+-- collides with a numeric pid.
 local foreground = {}
 local LC, RC, KEY_C = 0x1D, 0x9D, 0x2E
 
@@ -1429,6 +1434,13 @@ local function makeEnv(p)
         p.waitingFor = nil
         return code
       end
+      -- A stopped child (Ctrl+Z) must not block the waiter forever: report the
+      -- job-control status 148 (128 + SIGTSTP) so the shell regains the prompt
+      -- and the job stays in its table as "stopped".
+      if found.stopped then
+        p.waitingFor = nil
+        return 148
+      end
       coroutine.yield() -- scheduler resumes waiters every tick, no signal needed
     end
   end
@@ -1985,9 +1997,20 @@ local function makeEnv(p)
   end
   -- Spawn with redirected stdio: fds (pipes) or {path, mode} specs.
   -- (myInh is defined once near the top of makeEnv.)
+  -- pgid joins the child to an existing group (pipelines, job control). An
+  -- unprivileged caller may only use its own group or a group made up of its
+  -- own children, so it cannot inject itself into someone else's job.
   function freax.spawnIO(name, path, args, inFd, outFd, errFd, pgid)
     local inh = myInh()
-    if tonumber(pgid) then inh.pgid = tonumber(pgid) end
+    pgid = tonumber(pgid)
+    if pgid and not isRoot(p) and pgid ~= p.pgid then
+      local mine = false
+      for _, q in ipairs(procs) do
+        if q.pgid == pgid and not q.dead and q.parent == p.pid then mine = true end
+      end
+      if not mine then return nil, "not a child process group" end
+    end
+    if pgid then inh.pgid = pgid end
     return K.spawn(name, path, args, { in_ = inFd, out = outFd, err = errFd }, inh)
   end
   function freax.myInfo()
@@ -2028,6 +2051,11 @@ local function makeEnv(p)
     end
     return nil, "no such process"
   end
+  -- Terminal foreground process group (job control). A process may claim a
+  -- group it leads, a group one of its children is in, or any group as root.
+  -- Passing nil releases the terminal back to the shell.
+  function freax.setForeground(pgid) return K.claimForeground(p, pgid) end
+  function freax.getForeground() return K.foregroundGroup() end
   -- Wait for any child in a process group. Returns pid, exit code.
   function freax.waitGroup(pgid)
     pgid = tonumber(pgid)
@@ -2050,11 +2078,22 @@ local function makeEnv(p)
             p.waitingFor = nil
             return q.pid, code
           end
+          -- stopped member: report job control (128 + SIGTSTP) instead of
+          -- blocking until someone resumes it
+          if q.stopped then
+            p.waitingFor = nil
+            return q.pid, 148
+          end
         end
       end
+      -- Only wait for members this caller may reap; a foreign member must not
+      -- keep the group alive forever.
       local any = false
       for _, q in ipairs(procs) do
-        if q.pgid == pgid and not q.dead then any = true break end
+        if q.pgid == pgid and not q.dead and (q.parent == p.pid or isRoot(p)) then
+          any = true
+          break
+        end
       end
       if not any then p.waitingFor = nil return nil, "no such process group" end
       coroutine.yield()
@@ -2789,12 +2828,95 @@ end
 -- Scheduler
 ---------------------------------------------------------------
 
--- Kill the foreground command tree (Ctrl+C). Unix foreground-group style:
--- only pids spawned via freax.spawnIO count as foreground, so a shell at the
--- prompt (empty set) is never killed. Returns true if something was killed.
+-- Claim or release the terminal foreground process group (job control). A
+-- process may claim a group it leads or that holds one of its children, as
+-- long as every live member shares the caller's real uid; root may claim any
+-- group. nil releases the terminal back to the shell.
+function K.claimForeground(p, pgid)
+  if pgid == nil or pgid == 0 then
+    local fg = foreground.fg
+    if not fg or isRoot(p) or p.pgid == fg then
+      foreground.fg = nil
+      return true
+    end
+    for _, q in ipairs(procs) do
+      if q.pgid == fg and not q.dead and q.parent == p.pid then
+        foreground.fg = nil
+        return true
+      end
+    end
+    return denied()
+  end
+  pgid = tonumber(pgid)
+  if not pgid then return nil, "bad pgid" end
+  local live, own
+  for _, q in ipairs(procs) do
+    if q.pgid == pgid and not q.dead then
+      live = true
+      if q.parent == p.pid then own = true end
+      if not isRoot(p) and q.uid ~= p.uid then return denied() end
+    end
+  end
+  if not live then return nil, "no such process group" end
+  if not isRoot(p) and p.pgid ~= pgid and not own then return denied() end
+  foreground.fg = pgid
+  return true
+end
+
+function K.foregroundGroup() return foreground.fg end
+
+-- Signal the terminal foreground process group. Unix job-control style: only
+-- the group the shell claimed is affected, so a shell at the prompt (no group)
+-- and background jobs survive. mode is "INT" (Ctrl+C) or "TSTP" (Ctrl+Z).
+function K.terminalSignal(mode)
+  local pgid = foreground.fg
+  if not pgid then return false end
+  local stop = mode == "TSTP"
+  local kill = {}
+  for _, q in ipairs(procs) do
+    if q.pgid == pgid and not q.dead then kill[q.pid] = true end
+  end
+  if next(kill) == nil then
+    foreground.fg = nil
+    return false
+  end
+  if not stop then
+    -- Ctrl+C also takes down descendants of the job: they lead their own
+    -- groups, so group-only targeting would orphan them.
+    local grew = true
+    while grew do
+      grew = false
+      for _, q in ipairs(procs) do
+        if not kill[q.pid] and kill[q.parent] then
+          kill[q.pid] = true
+          grew = true
+        end
+      end
+    end
+  end
+  for _, q in ipairs(procs) do
+    if kill[q.pid] and not q.dead then
+      if stop then
+        if q.pid ~= 1 then q.stopped = true end
+      else
+        q.dead = true
+        if not q.exitCode then q.exitCode = 130 end -- 128 + SIGINT
+      end
+    end
+  end
+  foreground.fg = nil
+  return true
+end
+
+-- Ctrl+C. Prefers the terminal foreground group; falls back to the historical
+-- tree of spawnIO pids so a foreground command started before the shell claimed
+-- a group is still interruptible. Returns true if something was signalled.
 function K.interrupt()
+  if foreground.fg then return K.terminalSignal("INT") end
   local any = false
-  for _ in pairs(foreground) do any = true break end
+  for pid in pairs(foreground) do
+    if type(pid) == "number" then any = true break end
+  end
   if not any then return false end
   local kill = {}
   local function mark(pid)
@@ -2804,7 +2926,9 @@ function K.interrupt()
       if q.parent == pid then mark(q.pid) end
     end
   end
-  for pid in pairs(foreground) do mark(pid) end
+  for pid in pairs(foreground) do
+    if type(pid) == "number" then mark(pid) end
+  end
   for _, q in ipairs(procs) do
     if kill[q.pid] and not q.dead then
       q.dead = true
@@ -2813,6 +2937,12 @@ function K.interrupt()
   end
   foreground = {}
   return true
+end
+
+-- Ctrl+Z: stop (not kill) the foreground group so `bg`/`fg` can resume it.
+function K.suspend()
+  if not foreground.fg then return false end
+  return K.terminalSignal("TSTP")
 end
 
 function K.loop()
@@ -2831,6 +2961,8 @@ function K.loop()
             ctrlDown = true
           elseif kcode == KEY_C and ctrlDown and K.interrupt() then
             sig, hasSig = nil, false -- consumed by the interrupt
+          elseif kcode == 0x14 and ctrlDown and K.suspend() then -- KEY_Z
+            sig, hasSig = nil, false -- consumed by the suspend
           end
         elseif kname == "key_up" then
           if kcode == LC or kcode == RC then ctrlDown = false end
@@ -2854,6 +2986,13 @@ function K.loop()
         closeOwnedFds(p.pid)
         foreground[p.pid] = nil
         table.remove(procs, i)
+        if foreground.fg == p.pgid then
+          local live = false
+          for _, q in ipairs(procs) do
+            if q.pgid == foreground.fg and not q.dead then live = true break end
+          end
+          if not live then foreground.fg = nil end
+        end
       else
         local ok, err
         currentP = p -- dispatch proxies resolve to the running process

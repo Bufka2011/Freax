@@ -6,6 +6,37 @@ has no Git release tags, so sections follow VERSION changes and release commits.
 Unversioned commits are grouped into the release they built or repaired.
 
 
+1.10 - 2026-09-26
+------------------
+Shell job control.
+
+- Added background execution with a trailing `&`; each background pipeline is
+  one job with one process group.
+- Added `jobs`, `fg`, `bg`, and `wait` builtins plus `%n`, `%+`, `%-`, and
+  `%prefix` job references.
+- Added `kill %JOB` to signal a whole job group.
+- Added `$!` for the last background process.
+- Every pipeline stage now shares the first stage's process group, so a signal
+  or `waitGroup` addresses the pipeline as a unit.
+- Added a kernel terminal foreground process group with `setForeground` and
+  `getForeground`; a nested shell no longer steals the outer shell's terminal.
+- Added Ctrl+Z suspend (TSTP) for the foreground job; Ctrl+C also takes down
+  the job's descendants and still falls back to the historical foreground-pid
+  walk.
+- `wait` and `freax.waitGroup` now report 148 (128 + SIGTSTP) for a suspended
+  job instead of blocking forever, so the shell always regains the prompt.
+- Background jobs get a closed stdin pipe so they cannot steal terminal input
+  until `/dev/null` exists.
+- Foreground claims and `spawnIO` group joins are now authorized: an
+  unprivileged process may only use its own group or one built from its own
+  children with matching uid.
+- Job table is bounded and refuses new jobs rather than losing a live one;
+  job state uses one process-table snapshot per call instead of one per pid.
+- Added `usr/man/jobs`; updated `usr/man/sh` and `usr/man/kill`.
+- Added selfcheck coverage for background spawn, `$!`, `wait`, and job exit
+  status propagation.
+
+
 1.09 - 2026-09-26
 ------------------
 M6 baseline measurement and compatibility-contract start.

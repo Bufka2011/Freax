@@ -151,6 +151,43 @@ else
   skip("shell scripts", "no writable tmp")
 end
 
+section("background jobs")
+local jobScript = "/tmp/s_sc_job.sh"
+local jobResult = "/tmp/s_sc_job.txt"
+local jobWork = "/tmp/s_sc_job_work.txt"
+local jobFile = io.open(jobScript, "w")
+if jobFile then
+  -- background job writes its own file and exits 3; the script must see that
+  -- status through `wait` and `$?`
+  jobFile:write('sh -c \'sleep 0.3; echo worked > ', jobWork, '; exit 3\' &\n')
+  jobFile:write('echo "pid=$!" > ', jobResult, '\n')
+  jobFile:write('wait\n')
+  jobFile:write('echo "status=$?" >> ', jobResult, '\n')
+  jobFile:close()
+  local jobPid = freax.spawn("selfcheck-sh-job", "/bin/sh.lua", {jobScript})
+  check("job script spawn", type(jobPid) == "number")
+  check("job script status", jobPid and freax.wait(jobPid) == 0)
+  local jobOut = io.open(jobResult, "r")
+  local jobData = jobOut and jobOut:read("*a") or nil
+  if jobOut then jobOut:close() end
+  local jobPidText = jobData and jobData:match("^pid=(%d+)\n") or nil
+  check("background $! recorded", jobPidText ~= nil and tonumber(jobPidText) > 0,
+    tostring(jobPidText))
+  check("wait reported job exit status", jobData ~= nil
+    and jobData:find("status=3\n", 1, true) ~= nil,
+    tostring(jobData):gsub("\n", "|"))
+  local workOut = io.open(jobWork, "r")
+  local workData = workOut and workOut:read("*a") or nil
+  if workOut then workOut:close() end
+  check("background job ran to completion", workData == "worked\n",
+    tostring(workData))
+  os.remove(jobScript)
+  os.remove(jobResult)
+  os.remove(jobWork)
+else
+  skip("background jobs", "no writable tmp")
+end
+
 section("processes and signals")
 local computer = require("computer")
 check("uptime", computer.uptime() >= 0)
@@ -161,6 +198,8 @@ check("geteuid", type(freax.geteuid) == "function" and type(freax.geteuid()) == 
 
 -- process groups and signals: fresh spawns lead their own group
 check("pgid-fns", type(freax.getpgid) == "function" and type(freax.setpgid) == "function")
+check("foreground-fns", type(freax.setForeground) == "function"
+  and type(freax.getForeground) == "function")
 local selfPid = freax.getpid()
 check("pgid-self", freax.getpgid() == selfPid)
 check("setpgid-self", freax.setpgid(selfPid, selfPid) == true)

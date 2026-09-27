@@ -22,8 +22,8 @@ and filesystem semantics, bash-inspired shell, and FHS filesystem layout.
   dies, the kernel lives.
 - **Shell**: bash-ish - pipes `|`, redirects `> >> < 2>` `2>&1`,
   chaining `; && ||`, vars `$VAR`, positional parameters, aliases, source,
-  script files, multiline `if` and finite `for`, foreground wait/kill
-  (no background `&` job control yet).
+  script files, multiline `if` and finite `for`, background `&` jobs with
+  `jobs`/`fg`/`bg`/`wait`, and Ctrl+C / Ctrl+Z job control.
 
 ## Status
 
@@ -84,10 +84,11 @@ regression reporting). See `TODO.txt` in the source repository for roadmap.
 
 Freax targets practical OpenComputers use, not complete Linux/POSIX or
 OpenOS parity. Missing major work includes persistent POSIX mode metadata
-(per-file ownership), background job control, modem APIs, signed
-repositories, transactional OS updates, persistent symlinks, and network
-policy per service. Removable-media autorun stays disabled because
-kernel-phase autorun would bypass process isolation.
+(per-file ownership), sessions and multiple terminal foreground groups, while/
+until and shell functions, `trap` and catchable signals, groups, modem APIs,
+signed repositories, transactional OS updates, persistent symlinks, /proc,
+populated /dev, and network policy per service. Removable-media autorun stays
+disabled because kernel-phase autorun would bypass process isolation.
 
 ## Compatibility contract
 

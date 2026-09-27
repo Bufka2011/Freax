@@ -156,6 +156,7 @@ usr/man/grep
 usr/man/head
 usr/man/hostname
 usr/man/install
+usr/man/jobs
 usr/man/kill
 usr/man/label
 usr/man/less

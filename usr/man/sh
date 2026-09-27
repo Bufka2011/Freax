@@ -18,7 +18,7 @@ EXPANSION
   expansion. $? is the last exit status. $# is the argument count. $0 and
   $1 through $9 select positional parameters; use ${10} for larger indexes.
   $* joins all parameters. "$@" as a complete word preserves each parameter
-  as one argument.
+  as one argument. $! is the process id of the last background job.
 
   '*' and '?' perform pathname expansion. '~' expands to $HOME. Backticks
   perform command substitution and remove trailing newlines.
@@ -26,9 +26,32 @@ EXPANSION
 COMMANDS
   Commands may be joined with ';', '&&', or '||'. '!' negates status.
   Pipelines use '|'. Redirects include '<', '>', '>>', '2>', and '2>&1'.
+  A trailing '&' runs the command in the background.
+
+  Every stage of a pipeline shares one process group, so a signal sent to the
+  group (Ctrl+C, Ctrl+Z, kill) affects the whole pipeline.
 
   Aliases apply at command positions. Builtins include cd, export, unset,
-  alias, unalias, source, jobs, wait, kill, exit, and logout.
+  alias, unalias, source, jobs, fg, bg, wait, kill, exit, and logout.
+
+JOB CONTROL
+  COMMAND &        run COMMAND in the background as job [n]
+  jobs             list background jobs and their state
+  fg [%JOB]        resume a stopped job in the foreground and wait for it
+  bg [%JOB]        resume a stopped job in the background
+  wait [%JOB]      wait for a job, or for every job when no argument is given
+  kill %JOB        send a signal to a job's process group
+
+  %JOB is %n (job number), %+ (most recent job), %- (previous job), or %prefix
+  (first job whose command starts with prefix).
+
+  Ctrl+C interrupts the foreground job. Ctrl+Z suspends it so bg or fg can
+  continue it. A background job's standard input is closed, so it cannot steal
+  input from the prompt. Suspended jobs report status 148.
+
+  Builtins cannot be backgrounded: they have no process of their own and no
+  subshell is created yet. Run them through `sh -c` when a separate process is
+  required.
 
 COMPOUND COMMANDS
   Compound keywords must appear at line boundaries.
@@ -60,10 +83,15 @@ SOURCE
   inherited. Source nesting is limited to 10 levels.
 
 LIMITATIONS
-  Background '&', while/until, functions, case, traps, here-documents,
-  arithmetic expansion, and general prefix/suffix use around "$@" are not
-  implemented yet. Builtins cannot be pipeline stages.
+  while/until, functions, case, traps, here-documents, arithmetic expansion,
+  and general prefix/suffix use around "$@" are not implemented yet. Builtins
+  cannot be pipeline stages or run in the background. The terminal supports one
+  foreground job at a time; nested shells do not take over the terminal.
 
 EXAMPLES
   sh /tmp/build.sh input "two words"
   sh -c 'ls /bin && echo ready'
+  sleep 300 &
+  jobs
+  fg %1
+  kill %1

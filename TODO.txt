@@ -39,8 +39,10 @@ Current baseline: 1.08
 [x] VFS mounts, read-only mounts, fd I/O, pipes, and RAM symlinks.
 [x] Login, passwd, su, package manager, installer, and service manager.
 [x] Shell pipelines, redirects, boolean chains, scripts, if, and finite for.
+[x] Background jobs, jobs/fg/bg/wait, Ctrl+C and Ctrl+Z, process groups.
 [x] Incremental checksummed system updates.
-[ ] Real terminal job control and background jobs.
+[ ] Sessions and multiple terminal foreground groups.
+[ ] while/until, functions, trap, and catchable signals.
 [ ] Persistent owner/group/mode metadata and durable symlinks.
 [ ] Supplementary groups and normal Unix permission checks.
 [ ] Useful /proc and /dev nodes.
@@ -93,9 +95,9 @@ Goal: provide clean Unix process semantics needed by shells and daemons.
 
 Process lifecycle
 -----------------
+[x] Add terminal foreground process-group ID and shell claim/release.
+[x] Spawn every pipeline directly into one process group.
 [ ] Add sessions, session leaders, and controlling-terminal ownership.
-[ ] Add terminal foreground process-group ID.
-[ ] Spawn every pipeline directly into one process group.
 [ ] Track running, sleeping, waiting, stopped, zombie, and exited states.
 [ ] Preserve child state until parent reap; bound zombie retention.
 [ ] Reparent or reap orphaned children through PID 1.
@@ -116,8 +118,9 @@ Signals
 [ ] Bound/coalesce pending signals.
 [ ] Generate PIPE when writing with no readers.
 [ ] Generate CHLD on child exit, stop, and continue.
-[ ] Route Ctrl+C and Ctrl+Z through terminal foreground process group.
+[x] Route Ctrl+C and Ctrl+Z through the terminal foreground process group.
 [ ] Send HUP when a controlling terminal closes.
+[x] Report 148 (128 + SIGTSTP) for suspended jobs instead of blocking.
 
 Done when
 ---------
@@ -137,12 +140,18 @@ Dependencies: M7.
 
 Job control
 -----------
-[ ] Parse background `&`.
-[ ] Implement jobs, fg, bg, and job-aware wait/kill.
-[ ] Track running, stopped, completed, and signaled jobs.
-[ ] Prevent background jobs reading terminal input.
-[ ] Run pipeline/background builtins in child shell contexts.
+[x] Parse background `&`.
+[x] Implement jobs, fg, bg, and job-aware wait/kill.
+[x] Track running, stopped, completed, and signaled jobs.
+[x] Prevent background jobs reading terminal input (closed stdin pipe; /dev/null
+    once devfs ships nodes).
+[x] Run pipeline/background builtins in child shell contexts - still pending:
+    builtins are refused in background with a clear error.
 [ ] Keep standalone cd/export/alias/source effects in parent shell.
+[x] Pipeline stages share one process group.
+[x] Terminal foreground process group with setForeground/getForeground.
+[x] Ctrl+C interrupt and Ctrl+Z suspend of the foreground job.
+[ ] Sessions, so a nested shell can own its own foreground group.
 
 Scripting
 ---------
