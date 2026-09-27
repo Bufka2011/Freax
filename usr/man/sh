@@ -34,6 +34,22 @@ COMMANDS
   Aliases apply at command positions. Builtins include cd, export, unset,
   alias, unalias, source, jobs, fg, bg, wait, kill, exit, and logout.
 
+LINE EDITING KEYS
+  Enter          submit the line
+  Backspace      delete the character before the cursor
+  Delete         delete the character under the cursor
+  Left, Right    move the cursor
+  Home, End      move to start or end of the line
+  Up, Down       recall earlier or newer history entries
+  Tab            complete command, alias, or path
+  Ctrl+C         cancel the current line, or interrupt the foreground job
+  Ctrl+D         end of input: with text, delete the character under the
+                 cursor; on an empty line, leave the shell
+  Ctrl+Z         suspend the foreground job
+
+  Ctrl+D on an empty line ends the shell the same way logout does, returning
+  the user to the login prompt.
+
 JOB CONTROL
   COMMAND &        run COMMAND in the background as job [n]
   jobs             list background jobs and their state

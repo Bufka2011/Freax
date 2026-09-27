@@ -874,6 +874,25 @@ local function ttyReadLine(p, mask, seed)
         redraw()
         ttyNewline()
         return nil
+      elseif code == 4 then                          -- Ctrl+D: end of input
+        -- Unix EOF semantics: on an empty line the reader reports EOF
+        -- (returns false, distinct from the nil used for Ctrl+C); with text
+        -- present it deletes the character under the cursor, like bash.
+        if echo then
+          if bufLen() == 0 then
+            pos = 0
+            redraw()
+            ttyNewline()
+            return false
+          elseif pos < bufLen() then
+            local a = pos > 0 and usub(buf, 1, pos) or ""
+            local b = usub(buf, pos + 2)
+            buf = a .. b
+            redraw()
+          else
+            freax.beep(2000, 0.1)
+          end
+        end
       elseif code == 28 then                       -- enter
         pos = bufLen()
         redraw()

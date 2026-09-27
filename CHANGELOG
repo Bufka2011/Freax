@@ -11,6 +11,20 @@ release they built or repaired. Later sections are written as each release
 ships.
 
 
+1.11 - 2026-09-26
+------------------
+Ctrl+D end-of-input.
+
+- Added Ctrl+D to the kernel line editor with Unix EOF semantics: on an empty
+  line it reports EOF and returns false, distinct from the nil used by Ctrl+C;
+  with text present it deletes the character under the cursor, or beeps at the
+  end of the line.
+- The interactive shell now treats EOF as leaving the shell, like logout, so
+  the user returns to the login prompt.
+- Password prompts ignore Ctrl+D, so an empty password still requires Enter.
+- Documented the full line-editing key set in `usr/man/sh`.
+
+
 1.10 - 2026-09-26
 ------------------
 Shell job control.

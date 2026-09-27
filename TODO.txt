@@ -155,6 +155,9 @@ Job control
 
 Scripting
 ---------
+[x] Add shebang execution - still pending: extensionless scripts need a shebang
+    handler in exec.
+[x] Add Ctrl+D end-of-input (EOF) to the line editor.
 [ ] Add while, until, break, and continue.
 [ ] Add shell functions with bounded recursion.
 [ ] Add case, return, shift, and trap.

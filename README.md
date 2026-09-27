@@ -23,7 +23,7 @@ and filesystem semantics, bash-inspired shell, and FHS filesystem layout.
 - **Shell**: bash-ish - pipes `|`, redirects `> >> < 2>` `2>&1`,
   chaining `; && ||`, vars `$VAR`, positional parameters, aliases, source,
   script files, multiline `if` and finite `for`, background `&` jobs with
-  `jobs`/`fg`/`bg`/`wait`, and Ctrl+C / Ctrl+Z job control.
+  `jobs`/`fg`/`bg`/`wait`, and Ctrl+C / Ctrl+Z / Ctrl+D job control.
 
 ## Status
 

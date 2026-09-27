@@ -437,10 +437,11 @@ while true do
   local user = currentUser()
   local sym = (freax.geteuid() == 0) and "#" or "$"
   term.write(user .. "@" .. hostname() .. ":" .. freax.getCwd() .. sym .. " ")
-  -- Ctrl+C cancels the line (ttyReadLine returns nil); an empty line is a
-  -- no-op. pcall guards the REPL: a command error must never kill the
-  -- shell (which would drop the user back to the login prompt).
-  local first = term.readLine() or ""
+  -- Ctrl+D on an empty line reports EOF (false); Ctrl+C cancels the line
+  -- (nil). EOF ends the shell, which returns the user to the login prompt.
+  local first = term.readLine()
+  if first == false then return 0 end
+  first = first or ""
   lastLine = first
   local lines = {first}
   while true do
@@ -451,6 +452,8 @@ while true do
     if not continuation then lines = {} break end
     lines[#lines + 1] = continuation
   end
+  -- pcall guards the REPL: a command error must never kill the shell, which
+  -- would drop the user back to the login prompt.
   local ok, err = pcall(runScript, lines, context)
   if not ok then io.stderr:write("sh: " .. tostring(err) .. "\n") end
 end
