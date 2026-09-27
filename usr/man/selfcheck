@@ -1,0 +1,29 @@
+NAME
+  selfcheck - run Freax in-game regression and memory checks
+
+SYNOPSIS
+  lua /selfcheck.lua
+
+DESCRIPTION
+  selfcheck validates selected libraries, shell behavior, events, threads,
+  filesystems, process groups, signals, credentials, commands, and child exit
+  status on a running OpenComputers machine.
+
+  Output is grouped by subsystem. Optional tests print SKIP with a reason when
+  root access or writable temporary storage is unavailable. A successful run
+  prints check and skip totals plus free memory before requires, after requires,
+  and at completion.
+
+  First failure prints section and test, writes /tmp/s_fail.txt or /s_fail.txt
+  when possible, and exits 1. Success removes stale failure markers and exits 0.
+
+NOTES
+  Host LuaJIT proves syntax only. It cannot test OpenComputers scheduling,
+  hardware, terminal behavior, filesystem proxies, or credential enforcement.
+
+  Reboot before testing kernel, init, or shared-runtime changes.
+
+FILES
+  /selfcheck.lua
+  /tmp/s_fail.txt
+  /s_fail.txt

@@ -178,6 +178,7 @@ usr/man/resolution
 usr/man/rm
 usr/man/rmdir
 usr/man/set
+usr/man/selfcheck
 usr/man/sh
 usr/man/shutdown
 usr/man/umount

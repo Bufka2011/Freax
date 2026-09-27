@@ -1,11 +1,11 @@
 # FREAX - Linux-like OS for OpenComputers
 
-Freax is a from-scratch OpenOS replacement for the OpenComputers mod
+Freax is a from-scratch Linux server replica and OpenOS replacement for the OpenComputers mod
 (Minecraft 1.7.10, GTNH fork). Named after the original name Linus
 Torvalds rejected for Linux.
 
-Kernel-mediated hardware access, real process credentials, bash-inspired
-shell, and FHS filesystem layout.
+Kernel-mediated hardware access, real process credentials, Linux-style process
+and filesystem semantics, bash-inspired shell, and FHS filesystem layout.
 
 ## Design
 
@@ -27,7 +27,8 @@ shell, and FHS filesystem layout.
 
 ## Status
 
-Milestone reached: **M5** (multi-user credential boundary + shared runtime).
+Milestone reached: **M6 in progress** (baseline contracts, measurements, and
+regression reporting). See `TODO.txt` in the source repository for roadmap.
 
 - Kernel: scheduler, process table, syscall sandbox, VFS with mounts
   (incl. read-only), pipes (8K buffer), virtual symlinks (RAM table, lost
@@ -87,6 +88,22 @@ OpenOS parity. Missing major work includes persistent POSIX mode metadata
 repositories, transactional OS updates, persistent symlinks, and network
 policy per service. Removable-media autorun stays disabled because
 kernel-phase autorun would bypass process isolation.
+
+## Compatibility contract
+
+- **Native Freax**: `freax.*`, current process/signal behavior, VFS,
+  credentials, shell, package management, and service control are primary.
+- **Supported OpenOS subset**: compatibility libraries used by shipped commands,
+  including filesystem, terminal, events, threads, shell helpers, serialization,
+  internet, and mediated component methods.
+- **Partial compatibility**: generic components, primary switching, terminal
+  windows, devfs hardware nodes, and uncommon OpenOS signatures. These may be
+  incomplete until a real program needs them.
+- **Intentional differences**: no unrestricted `component.invoke`, no global
+  event injection, no removable-media autorun, and no claim of Linux ABI,
+  complete POSIX, Bash, systemd, GNU, or OpenOS parity.
+- Security, server usefulness, and low memory take priority over compatibility.
+  New compatibility must use mediated kernel APIs, never ambient authority.
 
 ## Quick start
 

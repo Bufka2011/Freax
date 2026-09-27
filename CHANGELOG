@@ -6,6 +6,21 @@ has no Git release tags, so sections follow VERSION changes and release commits.
 Unversioned commits are grouped into the release they built or repaired.
 
 
+1.09 - 2026-09-26
+------------------
+M6 baseline measurement and compatibility-contract start.
+
+- Grouped selfcheck output by subsystem and added check/skip totals.
+- Added explicit skip reasons for unavailable privileged or writable-temp tests.
+- Added free-memory measurements before requires, after requires, and at exit.
+- Added stale failure-marker cleanup after successful runs.
+- Added selfcheck manual page and documented host-test limitations.
+- Defined native, partial, supported, and intentionally unsupported
+  compatibility levels.
+- Replaced broad roadmap with kernel-first server essentials and no desktop
+  scope.
+
+
 1.08 - 2026-09-26 - fc8432b
 --------------------------------
 Shell scripting release.

@@ -1,12 +1,26 @@
 -- selfcheck: in-game smoke test, run via `lua /selfcheck.lua`
+local checks, skips = 0, 0
+local currentSection = "startup"
+
+local function section(name)
+  currentSection = name
+  io.write("\n== " .. name .. " ==\n")
+end
+
+local function skip(name, reason)
+  skips = skips + 1
+  io.write("SKIP " .. name .. ": " .. reason .. "\n")
+end
+
 local function check(n, c)
+  checks = checks + 1
   if not c then
     -- root may be read-only (uninstalled media): try tmp too.
     for _, p in ipairs({ "/tmp/s_fail.txt", "/s_fail.txt" }) do
       local ff = io.open(p, "w")
       if ff then ff:write(n) ff:close() break end
     end
-    io.stderr:write("FAIL " .. n .. "\n")
+    io.stderr:write("FAIL [" .. currentSection .. "] " .. n .. "\n")
     os.exit(1)
   end
 end
@@ -14,7 +28,9 @@ end
 -- memory accounting: freeMemory delta per require tells us which lib is
 -- worth optimizing (harmless if freax.freeMem is absent)
 local fm = freax and freax.freeMem
-if fm then io.write("free before requires: " .. tostring(fm()) .. " bytes\n") end
+local freeStart = fm and fm() or nil
+section("libraries and shell")
+if freeStart then io.write("free before requires: " .. tostring(freeStart) .. " bytes\n") end
 for _, m in ipairs({"text","transforms","colors","note","pipe",
   "process","package","io","os","buffer","internet","eeprom","rs","thread",
   "serialization","uuid","sides","event","keyboard","tty","filesystem",
@@ -49,7 +65,9 @@ check("shell compound parse", parsed and parsed[1] and parsed[1].kind == "if"
   and parsed[1].body[1] and parsed[1].body[1].kind == "for")
 local _, _, shellIncomplete = sh.parseScript({"if ls /; then"})
 check("shell incomplete parse", shellIncomplete == true)
+local freeAfterRequires = fm and fm() or nil
 
+section("threads and events")
 local event = require("event")
 local thread = require("thread")
 local log = {}
@@ -65,6 +83,7 @@ check("order", table.concat(log, ",") == "a,b")
 check("status", thread.status(t1) == "dead")
 check("thread timer", timerCalls == 1)
 
+section("filesystem and io")
 -- symlink cycles must error, never hang (ln refuses to make them,
 -- so build directly through the syscalls)
 check("link", freax.fsLink("/bin/ls.lua", "/sc_l1"))
@@ -90,9 +109,10 @@ if f then
   check("io", io.open(tmp, "r"):read("*a") == "x")
   os.remove(tmp)
 else
-  io.write("skip io write test (no writable tmp)\n")
+  skip("io write", "no writable tmp")
 end
 
+section("shell scripts")
 local shellScript = "/tmp/s_sc_shell.sh"
 local shellResult = "/tmp/s_sc_shell.txt"
 local shellMatch = "/tmp/s_sc_shell_match.txt"
@@ -128,8 +148,10 @@ if scriptFile then
   os.remove(shellMatch)
   os.remove(shellBuiltin)
 else
-  io.write("skip shell script test (no writable tmp)\n")
+  skip("shell scripts", "no writable tmp")
 end
+
+section("processes and signals")
 local computer = require("computer")
 check("uptime", computer.uptime() >= 0)
 check("kill-unknown", freax.kill(99999) == nil)
@@ -161,10 +183,11 @@ end
 
 -- credential boundary: a UID 1000 session must be confined to its home and
 -- /tmp/u1000, must not read /etc/shadow, write /etc, mount, or kill PID 1.
+section("credential boundary")
 if freax.geteuid() ~= 0 or type(freax.spawnAs) ~= "function" then
-  io.write("skip credential boundary test (needs root)\n")
+  skip("credential boundary", "needs root")
 elseif not freax.fsMakeDir("/tmp/u1000") and not freax.fsIsDir("/tmp/u1000") then
-  io.write("skip credential boundary test (no writable tmp)\n")
+  skip("credential boundary", "no writable tmp")
 else
   local probe = [[
 local out = {}
@@ -199,7 +222,7 @@ return 0
     pid, perr = freax.spawnAs("selfcheck-nr", "/tmp/s_sc_nr.lua", {}, 1000, 1000, "/tmp/u1000")
   end
   if not pid then
-    io.write("skip credential boundary test (no writable tmp: " .. tostring(perr) .. ")\n")
+    skip("credential boundary", "no writable tmp: " .. tostring(perr))
   else
   freax.wait(pid)
   local res, rerr = io.open("/tmp/u1000/result.txt", "r")
@@ -227,6 +250,7 @@ return 0
   end
 end
 
+section("commands and timeouts")
 check("fdcount-self", type(freax.fdCount) == "function"
   and type(freax.fdCount(freax.getpid())) == "number")
 
@@ -245,3 +269,15 @@ check("event timeout", event.pull(0.1, "selfcheck-never") == nil
 
 local o = io.open((os.tmpname() or "/tmp/s_compat.txt"), "w")
 if o then o:write("OK") o:close() end
+
+local freeFinal = fm and fm() or nil
+if freeStart and freeAfterRequires and freeFinal then
+  io.write(string.format("\nmemory: start=%d after_requires=%d final=%d require_delta=%+d final_delta=%+d\n",
+    freeStart, freeAfterRequires, freeFinal,
+    freeAfterRequires - freeStart, freeFinal - freeStart))
+else
+  io.write("\nmemory: unavailable\n")
+end
+os.remove("/tmp/s_fail.txt")
+os.remove("/s_fail.txt")
+io.write(string.format("PASS selfcheck: %d checks, %d skips\n", checks, skips))
