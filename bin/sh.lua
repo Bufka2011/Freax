@@ -7,6 +7,7 @@ local term = require("term")
 local shell = require("shell")
 local fs = require("fs")
 local sh = require("sh")
+local argv = table.pack(...)
 
 local builtins = {}
 
@@ -120,16 +121,24 @@ builtins.kill = function(...)
   return code
 end
 
-builtins.source = function(path)
-  if not path then io.write("usage: source FILE\n") return 1 end
-  local data, err = fs.readFile(shell.resolve(path))
-  if not data then io.write("source: " .. tostring(err) .. "\n") return 1 end
-  local code = 0
-  for line in (data .. "\n"):gmatch("(.-)\n") do
-    if line:match("%S") and not line:match("^%s*#") then
-      code = runLine(line, (runDepth or 0) + 1)
-    end
+local function packedArgs(from, first)
+  local out = {}
+  for i = first, from.n do out[#out + 1] = tostring(from[i]) end
+  return out
+end
+
+builtins.source = function(path, ...)
+  if not path then io.write("usage: source FILE [ARG...]\n") return 1 end
+  local parent = sh.internal.currentContext or sh.newContext("sh")
+  if (parent.depth or 0) >= 10 then
+    io.stderr:write("sh: source nesting too deep\n")
+    return 1
   end
+  local passed = table.pack(...)
+  local args = passed.n > 0 and packedArgs(passed, 1) or parent.args
+  local context = sh.newContext(parent.name, args, (parent.depth or 0) + 1)
+  local code, err = sh.runFile(context, shell.resolve(path))
+  if err then io.stderr:write("source: " .. tostring(err) .. "\n") end
   return code
 end
 builtins["."] = builtins.source
@@ -143,33 +152,39 @@ builtins.help = function()
   io.write("misc: which printenv hostname date time yes mktmp reboot shutdown install apt\n")
   io.write("hw: components lshw address primary redstone flash label resolution\n")
   io.write("net: wget pastebin\n")
-  io.write("ops: a | b, > >> < 2> 2>&1 &>, ; && ||, quotes, source (M2)\n")
+  io.write("ops: a | b, > >> < 2> 2>&1 &>, ; && ||, if, for, source\n")
+  io.write("scripts: sh FILE [ARG...], sh -c COMMAND [NAME [ARG...]]\n")
   io.write("note: background '&' jobs are not implemented yet\n")
 end
 
-builtins.exit = function() freax.exit() end
-builtins.logout = function() freax.exit() end
+builtins.exit = function(code) freax.exit(tonumber(code) or 0) end
+builtins.logout = builtins.exit
 
 -- Builtins run in-process inside lib/sh.lua's executor; register them here.
 for name, fn in pairs(builtins) do
   sh.internal.builtins[name] = fn
 end
 
-runDepth = 0
-function runLine(line, depth)
-  depth = depth or 0
-  if depth > 10 then
-    io.write("sh: source nesting too deep\n")
-    return 1
-  end
-  runDepth = depth
-  local ok, reason = sh.execute(nil, line)
-  if ok == nil then
-    if reason then io.stderr:write("sh: " .. tostring(reason) .. "\n") end
-    return 2
-  end
-  return ok and 0 or (sh.getLastExitCode() or 1)
+local function runScript(input, context)
+  local code, reason = sh.runScript(context, input)
+  if reason then io.stderr:write("sh: " .. tostring(reason) .. "\n") end
+  return code
 end
+
+local context
+if argv[1] == "-c" then
+  if not argv[2] then io.stderr:write("sh: -c requires command\n") return 2 end
+  context = sh.newContext(argv[3] or "sh", packedArgs(argv, 4))
+  return runScript(argv[2], context)
+elseif argv[1] then
+  local path = shell.resolve(tostring(argv[1]))
+  context = sh.newContext(path, packedArgs(argv, 2))
+  local code, reason = sh.runFile(context, path)
+  if reason then io.stderr:write("sh: " .. tostring(reason) .. "\n") end
+  return code
+end
+
+context = sh.newContext("sh")
 
 -- Single-source version: /VERSION (apt-kept), fallback for old media.
 local _ver = "0.6"
@@ -198,6 +213,7 @@ local function currentUser()
 end
 term.writeln("FREAX " .. _ver .. " -- welcome, " .. currentUser())
 
+local _hostname
 local function hostname()
   if not _hostname then
     local data = fs.readFile("/etc/hostname")
@@ -233,6 +249,16 @@ while true do
   -- Ctrl+C cancels the line (ttyReadLine returns nil); an empty line is a
   -- no-op. pcall guards the REPL: a command error must never kill the
   -- shell (which would drop the user back to the login prompt).
-  local ok, err = pcall(runLine, term.readLine() or "", 0)
+  local first = term.readLine() or ""
+  local lines = {first}
+  while true do
+    local _, _, incomplete = sh.parseScript(lines)
+    if not incomplete then break end
+    term.write("> ")
+    local continuation = term.readLine()
+    if not continuation then lines = {} break end
+    lines[#lines + 1] = continuation
+  end
+  local ok, err = pcall(runScript, lines, context)
   if not ok then io.stderr:write("sh: " .. tostring(err) .. "\n") end
 end

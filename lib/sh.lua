@@ -180,15 +180,38 @@ end
 
 -- expand (interpret) a single quoted area
 -- examples: $foo or "$foo"
-function sh.expand(value)
+local function positional(context, key)
+  if not context then return nil end
+  if key == "#" then return tostring(#(context.args or {})) end
+  if key == "@" or key == "*" then
+    local sep = (os.getenv("IFS") or " "):sub(1, 1)
+    return table.concat(context.args or {}, sep ~= "" and sep or " ")
+  end
+  local index = tonumber(key)
+  if index then
+    if index == 0 then return context.name or "sh" end
+    return (context.args or {})[index] or ""
+  end
+end
+
+function sh.expand(value, context)
   local expanded = value
-  :gsub("%$([_%w%?]+)", function(key)
+  :gsub("%$(%d)", function(key)
+    return positional(context, key) or ""
+  end)
+  :gsub("%$([%?%#%@%*])", function(key)
     if key == "?" then
       return tostring(sh.getLastExitCode())
     end
+    return positional(context, key) or ""
+  end)
+  :gsub("%$([_%a][_%w]*)", function(key)
     return os.getenv(key) or ''
   end)
   :gsub("%${([^}]*)}", function(key)
+    if key == "?" then return tostring(sh.getLastExitCode()) end
+    local value = positional(context, key)
+    if value ~= nil then return value end
     if sh.internal.isIdentifier(key) then
       return os.getenv(key) or ''
     end
@@ -361,13 +384,14 @@ function sh.internal.runBuiltin(name, args, redirects)
   local result = table.pack(pcall(builtin, table.unpack(args)))
   restore()
   if not result[1] then return false, tostring(result[2]) end
-  return sh.internal.command_passed(result[2]), result[3]
+  if result[2] == nil then return true end
+  return result[2], result[3]
 end
 
 function sh.internal.executePipes(pipe_parts, eargs, env)
   local stages = {}
   for _, words in ipairs(pipe_parts) do
-    local args, redirects = sh.internal.evaluate(words)
+    local args, redirects = sh.internal.evaluate(words, env)
     if not args then
       return false, redirects -- in this failure case, redirects holds the message
     end
@@ -404,7 +428,11 @@ function sh.internal.executePipes(pipe_parts, eargs, env)
       end
       closeOwned(owned)
       waitAll(pids)
-      return sh.internal.runBuiltin(name, st.args, st.redirects)
+      local previous = sh.internal.currentContext
+      sh.internal.currentContext = env
+      local result, reason = sh.internal.runBuiltin(name, st.args, st.redirects)
+      sh.internal.currentContext = previous
+      return result, reason
     end
 
     local path = shell.resolveCmd(name)
@@ -458,7 +486,7 @@ end
 -- removes the redirects and their arguments from the ewords
 -- returns a redirection table that is used during process load
 -- returns false if no redirections are defined
-function sh.internal.buildCommandRedirects(words)
+function sh.internal.buildCommandRedirects(words, context)
   local redirects = {}
   local index = 1 -- we move index manually to allow removals from ewords
   local from_io, to_io, mode
@@ -487,7 +515,7 @@ function sh.internal.buildCommandRedirects(words)
       from_io = from_io_txt ~= "" and tonumber(from_io_txt) or mode == "r" and 0 or 1
       to_io = to_io_txt ~= "" and tonumber(to_io_txt)
     elseif mode then
-      token = sh.internal.evaluate({word})
+      token = sh.internal.evaluate({word}, context)
       if #token > 1 then
         return nil, string.format("%s: ambiguous redirect", part.txt)
       end
@@ -755,6 +783,7 @@ function sh.internal.execute_complex(words, eargs, env)
       local next_args = chain_index == #chains and si == #statements and eargs or {}
       return sh.internal.executePipes(pipe_parts, next_args, env)
     end)
+    if last_code == nil then return nil, reason end
     sh.internal.ec.last = sh.internal.command_result_as_code(last_code, reason)
   end
   return sh.internal.ec.last == 0
@@ -762,8 +791,8 @@ end
 
 -- params: words[tokenized word list]
 -- return: command args, redirects
-function sh.internal.evaluate(words)
-  local redirects, why = sh.internal.buildCommandRedirects(words)
+function sh.internal.evaluate(words, context)
+  local redirects, why = sh.internal.buildCommandRedirects(words, context)
   if not redirects then
     return nil, why
   end
@@ -778,15 +807,20 @@ function sh.internal.evaluate(words)
   end
 
   local repack = false
+  local function isExactAt(word)
+    local only = #word == 1 and word[1]
+    return only and not (only.qr or {})[3]
+      and (only.txt == "$@" or only.txt == "${@}") and context ~= nil
+  end
   for _, word in ipairs(words) do
     local first = word[1]
     if first and not first.qr
       and (first.txt == "~" or first.txt:sub(1, 2) == "~/") then
       first.txt = (os.getenv("HOME") or "") .. first.txt:sub(2)
     end
-    for _, part in pairs(word) do
-      if not (part.qr or {})[3] then
-        local expanded = sh.expand(part.txt)
+    for _, part in ipairs(word) do
+      if not isExactAt(word) and not (part.qr or {})[3] then
+        local expanded = sh.expand(part.txt, context)
         if expanded ~= part.txt then
           part.txt = expanded
           repack = true
@@ -803,13 +837,17 @@ function sh.internal.evaluate(words)
 
   local args = {}
   for _, word in ipairs(words) do
-    local eword = { txt = "" }
-    for _, part in ipairs(word) do
-      eword.txt = eword.txt .. part.txt
-      eword[#eword + 1] = { qr = part.qr, txt = part.txt }
-    end
-    for _, arg in ipairs(sh.internal.glob(eword)) do
-      args[#args + 1] = arg
+    if isExactAt(word) then
+      for _, arg in ipairs(context.args or {}) do args[#args + 1] = arg end
+    else
+      local eword = { txt = "" }
+      for _, part in ipairs(word) do
+        eword.txt = eword.txt .. part.txt
+        eword[#eword + 1] = { qr = part.qr, txt = part.txt }
+      end
+      for _, arg in ipairs(sh.internal.glob(eword)) do
+        args[#args + 1] = arg
+      end
     end
   end
 
@@ -870,11 +908,201 @@ function sh.execute(env, command, ...)
 
   -- simple
   if not command:find("[;%$&|!<>]") then
-    sh.internal.ec.last = sh.internal.command_result_as_code(sh.internal.executePipes({words}, eargs, env))
+    local result, why = sh.internal.executePipes({words}, eargs, env)
+    sh.internal.ec.last = sh.internal.command_result_as_code(result, why)
     return sh.internal.ec.last == 0
   end
 
   return sh.internal.execute_complex(words, eargs, env)
+end
+
+-------------------------------------------------------------------------------
+-- Small script language. Compound commands stay line-oriented; ordinary
+-- command text is delegated to the command parser above.
+
+function sh.newContext(name, args, depth)
+  return { name = name or "sh", args = args or {}, depth = depth or 0 }
+end
+
+local function scriptLines(input)
+  if type(input) == "function" then return input end
+  if type(input) == "table" then
+    local i = 0
+    return function() i = i + 1 return input[i] end
+  end
+  local data = tostring(input or "")
+  local at = 1
+  return function()
+    if at > #data then return nil end
+    local stop = data:find("\n", at, true)
+    local line
+    if stop then
+      line, at = data:sub(at, stop - 1), stop + 1
+    else
+      line, at = data:sub(at), #data + 1
+    end
+    return line:gsub("\r$", "")
+  end
+end
+
+function sh.parseScript(input)
+  local root = {}
+  local stack = {{ body = root, kind = "root" }}
+  local lineNumber = 0
+  local nextLine = scriptLines(input)
+
+  local function fail(message, incomplete)
+    return nil, string.format("line %d: %s", lineNumber, message), incomplete
+  end
+
+  while true do
+    local line = nextLine()
+    if line == nil then break end
+    lineNumber = lineNumber + 1
+    local trimmed = line:match("^%s*(.-)%s*$")
+    if trimmed ~= "" and not trimmed:match("^#") then
+      local frame = stack[#stack]
+      if trimmed == "then" then
+        if frame.kind ~= "if" or frame.phase ~= "then-pending" then
+          return fail("unexpected 'then'")
+        end
+        frame.phase = "then"
+      elseif trimmed == "else" then
+        if frame.kind ~= "if" or frame.phase ~= "then" then
+          return fail("unexpected 'else'")
+        end
+        frame.phase, frame.body = "else", frame.node.otherwise
+      elseif trimmed == "fi" then
+        if frame.kind ~= "if" or frame.phase == "then-pending" then
+          return fail("unexpected 'fi'")
+        end
+        table.remove(stack)
+      elseif trimmed == "do" then
+        if frame.kind ~= "for" or frame.phase ~= "do-pending" then
+          return fail("unexpected 'do'")
+        end
+        frame.phase = "body"
+      elseif trimmed == "done" then
+        if frame.kind ~= "for" or frame.phase ~= "body" then
+          return fail("unexpected 'done'")
+        end
+        table.remove(stack)
+      else
+        frame = stack[#stack]
+        if frame.phase == "then-pending" then return fail("expected 'then'") end
+        if frame.phase == "do-pending" then return fail("expected 'do'") end
+
+        local condition, inlineThen = trimmed:match("^if%s+(.+)%s*;%s*(then)%s*$")
+        if not condition then condition = trimmed:match("^if%s+(.+)$") end
+        local loopHead, inlineDo = trimmed:match("^for%s+(.+)%s*;%s*(do)%s*$")
+        if not loopHead then loopHead = trimmed:match("^for%s+(.+)$") end
+
+        if condition then
+          condition = condition:match("^%s*(.-)%s*$")
+          if condition == "" then return fail("empty if condition") end
+          local node = { kind = "if", condition = condition, body = {}, otherwise = {}, line = lineNumber }
+          frame.body[#frame.body + 1] = node
+          if #stack >= 16 then return fail("compound command nesting too deep") end
+          stack[#stack + 1] = {
+            kind = "if", node = node, body = node.body,
+            phase = inlineThen and "then" or "then-pending",
+          }
+        elseif loopHead then
+          loopHead = loopHead:match("^%s*(.-)%s*$")
+          local name, words = loopHead:match("^([%a_][%w_]*)%s+in%s+(.+)$")
+          if not name then name = loopHead:match("^([%a_][%w_]*)$") end
+          if not name then return fail("invalid for loop") end
+          local node = { kind = "for", name = name, words = words, body = {}, line = lineNumber }
+          frame.body[#frame.body + 1] = node
+          if #stack >= 16 then return fail("compound command nesting too deep") end
+          stack[#stack + 1] = {
+            kind = "for", node = node, body = node.body,
+            phase = inlineDo and "body" or "do-pending",
+          }
+        else
+          frame.body[#frame.body + 1] = { kind = "command", text = line, line = lineNumber }
+        end
+      end
+    end
+  end
+
+  if #stack > 1 then
+    local frame = stack[#stack]
+    return fail("unterminated " .. frame.kind, true)
+  end
+  return root
+end
+
+local function runNodes(nodes, context)
+  local code = 0
+  for _, node in ipairs(nodes) do
+    if node.kind == "command" then
+      local ok, reason = sh.execute(context, node.text)
+      if ok == nil then return 2, reason end
+      code = ok and 0 or (sh.getLastExitCode() or 1)
+    elseif node.kind == "if" then
+      local ok, reason = sh.execute(context, node.condition)
+      if ok == nil then return 2, reason end
+      code, reason = runNodes(ok and node.body or node.otherwise, context)
+      if reason then return code, reason end
+    elseif node.kind == "for" then
+      code = 0
+      local values
+      if node.words then
+        local words, reason = sh.internal.tokenize("__for__ " .. node.words)
+        if not words then return 2, reason end
+        values, reason = sh.internal.evaluate(words, context)
+        if not values then return 2, reason end
+        table.remove(values, 1)
+      else
+        values = context.args or {}
+      end
+      for i, value in ipairs(values) do
+        os.setenv(node.name, value)
+        local reason
+        code, reason = runNodes(node.body, context)
+        if reason then return code, reason end
+        if i % 32 == 0 then freax.sleep(0.05) end
+      end
+    end
+  end
+  sh.internal.ec.last = code
+  return code
+end
+
+function sh.runScript(context, input)
+  context = context or sh.newContext()
+  local program, reason = sh.parseScript(input)
+  if not program then return 2, reason end
+  return runNodes(program, context)
+end
+
+function sh.runFile(context, path)
+  local file, reason = io.open(path, "r")
+  if not file then return 1, reason end
+  context = context or sh.newContext(path)
+  local pending = {}
+  local code, parseReason = 0
+  local chunks = 0
+  for line in file:lines() do
+    pending[#pending + 1] = line
+    local program, why, incomplete = sh.parseScript(pending)
+    if program then
+      code, why = runNodes(program, context)
+      if why then file:close() return code, why end
+      pending = {}
+      chunks = chunks + 1
+      if chunks % 32 == 0 then freax.sleep(0.05) end
+    elseif not incomplete then
+      file:close()
+      return 2, why
+    else
+      parseReason = why
+    end
+  end
+  file:close()
+  if #pending > 0 then return 2, parseReason end
+  return code
 end
 
 return sh

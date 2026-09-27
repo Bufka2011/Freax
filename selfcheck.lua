@@ -39,6 +39,16 @@ check("sides", require("sides").north == 2)
 local sh = require("sh")
 local completions = sh.complete("lua /self")
 check("path completion", #completions == 1 and completions[1] == "/selfcheck.lua")
+local shellContext = sh.newContext("probe", {"one", "two words"})
+check("shell positional", sh.expand("$0:$1:${2}:$#", shellContext)
+  == "probe:one:two words:2")
+local parsed = sh.parseScript({
+  "if ls /; then", "for x in \"$@\"; do", "echo $x", "done", "fi",
+})
+check("shell compound parse", parsed and parsed[1] and parsed[1].kind == "if"
+  and parsed[1].body[1] and parsed[1].body[1].kind == "for")
+local _, _, shellIncomplete = sh.parseScript({"if ls /; then"})
+check("shell incomplete parse", shellIncomplete == true)
 
 local event = require("event")
 local thread = require("thread")
@@ -81,6 +91,44 @@ if f then
   os.remove(tmp)
 else
   io.write("skip io write test (no writable tmp)\n")
+end
+
+local shellScript = "/tmp/s_sc_shell.sh"
+local shellResult = "/tmp/s_sc_shell.txt"
+local shellMatch = "/tmp/s_sc_shell_match.txt"
+local shellBuiltin = "/tmp/s_sc_shell_builtin.txt"
+local scriptFile = io.open(shellScript, "w")
+if scriptFile then
+  scriptFile:write('echo "$#:$1:$2" > ', shellResult, '\n')
+  scriptFile:write('for x in "$@"; do\n')
+  scriptFile:write('  echo "x=$x" >> ', shellResult, '\n')
+  scriptFile:write('done\n')
+  scriptFile:write('if grep "two words" ', shellResult, ' > ', shellMatch, '; then\n')
+  scriptFile:write('  echo yes >> ', shellResult, '\n')
+  scriptFile:write('else\n  echo no >> ', shellResult, '\nfi\n')
+  scriptFile:write('cd /tmp && pwd > ', shellBuiltin, '\n')
+  scriptFile:close()
+  local shellPid = freax.spawn("selfcheck-sh", "/bin/sh.lua",
+    {shellScript, "one", "two words"})
+  check("shell script spawn", type(shellPid) == "number")
+  check("shell script status", freax.wait(shellPid) == 0)
+  local resultFile = io.open(shellResult, "r")
+  local resultData = resultFile and resultFile:read("*a") or nil
+  if resultFile then resultFile:close() end
+  check("shell script output", resultData
+    == "2:one:two words\nx=one\nx=two words\nyes\n")
+  local builtinFile = io.open(shellBuiltin, "r")
+  local builtinData = builtinFile and builtinFile:read("*a") or nil
+  if builtinFile then builtinFile:close() end
+  check("shell builtin status", builtinData == "/tmp\n")
+  local exitPid = freax.spawn("selfcheck-sh-exit", "/bin/sh.lua", {"-c", "exit 7"})
+  check("shell exit status", exitPid and freax.wait(exitPid) == 7)
+  os.remove(shellScript)
+  os.remove(shellResult)
+  os.remove(shellMatch)
+  os.remove(shellBuiltin)
+else
+  io.write("skip shell script test (no writable tmp)\n")
 end
 local computer = require("computer")
 check("uptime", computer.uptime() >= 0)

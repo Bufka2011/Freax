@@ -1351,7 +1351,9 @@ local function makeEnv(p)
   function freax.getgid() return p.gid end
   function freax.getegid() return p.egid end
 
-  function freax.exit()
+  function freax.exit(code)
+    p.exitCode = (type(code) == "number" and code)
+      or (code == false and 1) or 0
     p.dead = true
     coroutine.yield()          -- never returns; scheduler reaps us
   end

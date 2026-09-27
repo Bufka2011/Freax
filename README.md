@@ -21,7 +21,8 @@ shell, and FHS filesystem layout.
   without yielding. That error unwinds through ONE coroutine - the hog
   dies, the kernel lives.
 - **Shell**: bash-ish - pipes `|`, redirects `> >> < 2>` `2>&1`,
-  chaining `; && ||`, vars `$VAR`, aliases, source, foreground wait/kill
+  chaining `; && ||`, vars `$VAR`, positional parameters, aliases, source,
+  script files, multiline `if` and finite `for`, foreground wait/kill
   (no background `&` job control yet).
 
 ## Status
@@ -35,9 +36,9 @@ Milestone reached: **M5** (multi-user credential boundary + shared runtime).
   and a shared module runtime (each library compiles once per machine and
   dispatches to the running process).
 - Shell: bash-ish tokenizer, pipelines, redirects, builtins, PATH
-  resolution, history, aliases, source. Parsing/execution now lives in the
-  reusable `lib/sh.lua` (builtins, `;`/`&&`/`||`/`|`, glob, redirects),
-  consumed by `bin/sh.lua`.
+  resolution, history, aliases, script execution, positional parameters,
+  source, multiline `if`, and finite `for`. Parsing/execution lives in the
+  reusable `lib/sh.lua`, consumed by `bin/sh.lua`.
 - Filesystem: OC filesystem proxies via VFS, tmpfs mounted at `/run`,
   mounts at `/mnt/<short>` for non-boot devices, `lib/devfs.lua` mounted
   lazily at `/dev` on first access.

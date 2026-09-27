@@ -1,43 +1,69 @@
 NAME
-  sh - command interpreter (shell)
+  sh - Freax command interpreter
 
 SYNOPSIS
   sh
+  sh FILE [ARG...]
+  sh -c COMMAND [NAME [ARG...]]
 
 DESCRIPTION
-  This is the basic, built-in standard shell of OpenOS. It provides basic functionality and does the job for getting started. To run a command, enter it and press enter. The first token in a command will usually be a program. Any additional parameters will be passed along to the program.
+  sh runs interactive commands or shell scripts. Script mode does not load
+  /etc/profile.lua or print the login banner.
 
-  Arguments to programs can be quoted, to provide strings with multiple spaces in them, for example:
-    echo "a   b"
-  will print the string `a   b` to the screen. It is also possible to use single quotes (echo 'a b').
+  FILE sets $0 to its resolved path. ARG values become $1, $2, and so on.
+  With -c, NAME becomes $0; it defaults to sh.
 
-  Single quotes also suppress variable expansion. Per default, expressions like `$NAME` and `${NAME}` are expanded using environment variables (also accessible via the `os.getenv` method).
+EXPANSION
+  Environment variables use $NAME or ${NAME}. Single quotes suppress
+  expansion. $? is the last exit status. $# is the argument count. $0 and
+  $1 through $9 select positional parameters; use ${10} for larger indexes.
+  $* joins all parameters. "$@" as a complete word preserves each parameter
+  as one argument.
 
-  Globbing is supported, i.e. '*' and '?' are expanded approriately. For example:
-    ls b?n/
-  will list all files in `/bin/` (and, if it exists `/ban` and so on).
-    cp /bin/* /usr/bin/
-  will copy all files from `/bin` to `/usr/bin`.
+  '*' and '?' perform pathname expansion. '~' expands to $HOME. Backticks
+  perform command substitution and remove trailing newlines.
 
-  The shell provides redirects and piping:
-    cat f > f2
-  copies the contents of file `f` to `f2`, for example.
-    echo 'this  is  a  "test"' >> f2
-  will append the string 'this is a "test"' to the file `f2`.
-    2>/dev/null ./some_program_with_errors
-  will redirect all stderr to /dev/null [i.e. supress errors].
-  This example also demonstrates redirects can go at the front
+COMMANDS
+  Commands may be joined with ';', '&&', or '||'. '!' negates status.
+  Pipelines use '|'. Redirects include '<', '>', '>>', '2>', and '2>&1'.
 
-  Redirects can be combined:
-    cat < f >> f2
-  will feed the contents of file `f` to cat, which will then output it (in append mode) to file `f2`.
+  Aliases apply at command positions. Builtins include cd, export, unset,
+  alias, unalias, source, jobs, wait, kill, exit, and logout.
 
-  Finally, pipes can be used to pass data between programs:
-    ls | cat > f
-  will enumerate the files and directories in the working directory, write them to its output stream, which is cat's input stream, which will in turn write the data to file `f`.
+COMPOUND COMMANDS
+  Compound keywords must appear at line boundaries.
 
-  The shell also supports aliases, which can be created using `alias` and removed using `unalias` (or using the `shell` API). For example, `dir` is a standard alias for `ls`.
+    if COMMAND; then
+      COMMANDS
+    else
+      COMMANDS
+    fi
+
+    for NAME in WORDS; do
+      COMMANDS
+    done
+
+    for NAME; do
+      COMMANDS
+    done
+
+  The last form iterates over positional parameters. Compound commands may
+  nest up to 15 levels.
+
+SOURCE
+  source FILE [ARG...]
+  . FILE [ARG...]
+
+  Source runs FILE in the current shell, so aliases, environment changes,
+  and working-directory changes remain. Supplied arguments temporarily
+  replace positional parameters; without arguments, current parameters are
+  inherited. Source nesting is limited to 10 levels.
+
+LIMITATIONS
+  Background '&', while/until, functions, case, traps, here-documents,
+  arithmetic expansion, and general prefix/suffix use around "$@" are not
+  implemented yet. Builtins cannot be pipeline stages.
 
 EXAMPLES
-  sh
-    Starts a new shell.
+  sh /tmp/build.sh input "two words"
+  sh -c 'ls /bin && echo ready'
