@@ -1,0 +1,367 @@
+FREAX CHANGELOG
+===============
+
+This history was reconstructed from all 135 Git commits through 1.08. Freax
+has no Git release tags, so sections follow VERSION changes and release commits.
+Unversioned commits are grouped into the release they built or repaired.
+
+
+1.08 - 2026-09-26 - fc8432b
+--------------------------------
+Shell scripting release.
+
+- Added `sh FILE [ARG...]` and `sh -c COMMAND [NAME [ARG...]]`.
+- Added positional parameters: `$0`, `$1` through `$9`, `${10}`, `$#`, `$*`,
+  `$@`, and argument-preserving `"$@"`.
+- Added multiline/nested `if`/`else`/`fi` and finite `for`/`do`/`done`.
+- Added continuation prompts for incomplete interactive compound commands.
+- Made `source FILE [ARG...]` use shell contexts with bounded nesting.
+- Made script-file execution incremental and periodically yielding.
+- Added numeric `exit N` propagation through kernel process exit state.
+- Fixed builtin status handling and standalone source redirection/quiet mode.
+- Expanded shell selfchecks and documentation.
+
+
+1.07 - 2026-09-26 - 396169c
+--------------------------------
+Process groups and signals.
+
+- Added process groups, `getpgid`, `setpgid`, and `waitGroup`.
+- Added TERM, KILL, INT, STOP, CONT, numeric signals, and signal 0 checks.
+- Added process-group signaling through negative IDs.
+- Added standalone `kill` plus matching shell builtin behavior.
+- STOPped processes no longer consume scheduler CPU; PID 1 cannot be stopped.
+- Standardized TERM/KILL/INT exit statuses as 143/137/130.
+- Changed ordinary spawns to lead new groups unless explicit PGID is supplied.
+
+
+1.06 - 2026-09-26 - 2afc374
+--------------------------------
+Timed events and child status correctness.
+
+- Fixed timers and timed event waits on otherwise idle machines.
+- Integrated event timeout dispatch with thread scheduling.
+- Changed `os.execute` to Lua 5.2 result form: `true, "exit", 0` or
+  `nil, "exit", code`.
+- Correctly propagated child statuses through less, man, pastebin, and time.
+- Added timer, timeout, and failed-child selfchecks.
+
+
+1.05 - 2026-09-26 - 9637432
+--------------------------------
+Filesystem-aware completion.
+
+- Completed builtins, aliases, PATH commands, files, directories, absolute and
+  relative paths, and option values following `=`.
+- Escaped shell-special characters and kept directory candidates open with `/`.
+- Supported completion at cursor position rather than line end only.
+
+
+1.04 - 2026-09-26 - c81ae25
+--------------------------------
+Immutable system-update sources.
+
+- GitHub-backed updates resolve `main` through GitHub API first.
+- Release files then come from one immutable commit SHA, preventing mixed files
+  when upstream changes during an update.
+- Custom mirrors continue using configured URLs directly.
+
+
+1.03 - 2026-09-26 - 37f3dc0
+--------------------------------
+Default package repository publication.
+
+- Added hosted `apt/dists/freax` Release and empty binary-all Packages indexes.
+- Clarified that repository content under `apt/` is hosted, not installed.
+
+
+1.02 - 2026-09-26 - c1e4ed0
+--------------------------------
+bit32 compatibility.
+
+- Uses host bit32 only when required Lua 5.2 operations exist.
+- Falls back to per-process pure-Lua implementation on incomplete hosts.
+
+
+1.01 - 2026-09-26 - 72730ab
+--------------------------------
+Service and repair fixes.
+
+- Fixed aggregate `systemctl status` and unit listing.
+- Made forced `apt install sys` repair truly re-download all eligible files.
+- Updated messages left over from removed `apt sys*` commands.
+
+
+1.00 - 2026-09-26 - 69bec2e
+--------------------------------
+First stable-series release.
+
+- Fixed raw web-installer password input and missing Unicode dependency.
+- Fixed tilde expansion, duplicate shell echo registration, head parsing and
+  zero-count behavior, and sleep smoke-test regressions.
+- Fixed stale systemctl response consumption, output normalization, and error
+  statuses.
+- Added explicit root checking to mount.
+- Installed `/selfcheck.lua` through normal and web installation paths.
+- Expanded installer/selfcheck documentation and coverage.
+- Included final pre-release fixes from 8365fac.
+
+
+0.99 - 2026-09-25 - ced6741
+--------------------------------
+- Restored parsing of historical passwordless shadow entries using either
+  single- or double-colon forms.
+- Standardized newly written passwordless entries while retaining old-disk
+  compatibility.
+
+
+0.98 - 2026-09-25 - 0f86756
+--------------------------------
+- Replaced unreliable OpenOS `term.read` password input with raw key events.
+- Added printable Unicode, Enter, Backspace, and stale-event flushing.
+
+
+0.97 - 2026-09-25 - f7a1e19
+--------------------------------
+- Recognized bare Enter/control-character results as empty web-install password.
+- Improved masked password prompt formatting.
+
+
+0.96 - 2026-09-25 - e4769de
+--------------------------------
+- Fixed empty password handling in stock OpenOS web installer.
+- Correctly treated `computer.setBootAddress` returning no value as success.
+
+
+0.95 - 2026-09-25 - f5dddd9
+--------------------------------
+OS updates became apt's virtual `sys` package.
+
+- `apt update` refreshes package repositories and OS release metadata.
+- `apt upgrade` upgrades packages and base OS together.
+- Added list/show/policy/install/verify support for `sys`.
+- Protected `sys` from removal and allowed forced reapplication.
+- Removed separate `apt sysupdate`, `sysupgrade`, and `sysverify` commands.
+
+
+0.94 - 2026-09-25 - 3a31522
+--------------------------------
+- Made OS replacement move old files aside, install, re-hash, and roll back on
+  failure.
+- Added `apt sysverify [--repair]` for installed-tree verification and repair.
+- Fixed false success when OC filesystems refused overwrite-by-rename.
+
+
+0.93 - 2026-09-25 - 73fe126
+--------------------------------
+- Fixed lazy `/dev` mounting through correct devfs proxy resolution.
+- Added devfs list and isDirectory behavior.
+- Bad shell substitutions now report errors without killing login shell.
+
+
+0.92 - 2026-09-25 - 8f02bdd
+--------------------------------
+Kernel-owned multi-user security boundary.
+
+- Added real/effective UID/GID credentials and root-only `spawnAs`.
+- Made USER/LOGNAME display-only rather than authorization sources.
+- Restricted machine controls, mounts, packages, installation, account changes,
+  and service control to root.
+- Confined non-root writes to configured home and private temp tree.
+- Protected shadow reads and restricted kill/wait by credentials.
+- Limited setuid behavior to su and passwd; normal exec drops effective IDs.
+- Added retained child status and richer ps UID/parent/state/fd/event fields.
+- Disabled removable-media autorun because kernel-phase execution bypassed
+  process credentials.
+- Required complete SHA256 and size metadata for repository packages.
+- Rejected package symlinks until links persist across reboot.
+- Preserved locally modified conffiles through `.dpkg-new`.
+
+Compatibility breaks:
+- Non-root filesystem and hardware behavior became restricted.
+- Kernel autorun was removed.
+- Package symlink entries stopped installing.
+
+
+0.91 - 2026-09-25 - 264f54e
+--------------------------------
+Broad security and reliability hardening.
+
+- Enforced fd ownership for files, networking, and redirected child stdio.
+- Made syscall, standard-library, computer, I/O, and OS proxies read-only.
+- Restricted shared libraries to stateless core modules.
+- Hardened malformed/missing shadow handling.
+- Rejected non-canonical, duplicate, traversal, truncated, or unknown manifest
+  and fpkg entries.
+- Added backup/rollback behavior for package status replacement.
+- Prevented cross-device rename from deleting source after copy/close failure.
+- Hardened installer address resolution and incomplete-install boot handling.
+- Validated system-update manifests, checksum paths, and missing local files.
+- Fixed shell substitutions, glob iteration, builtin exceptions, command
+  substitution errors, and pipeline status handling.
+- Added service cycle detection, safer stop/restart, normalized unit keys, and
+  real daemon reload.
+- Corrected documentation: background `&` was not implemented.
+
+
+0.90 - 2026-09-19 - 20a0e5a
+--------------------------------
+- Allowed commands and scripts containing paths to execute correctly.
+- Made PATH resolution absolute while honoring relative entries such as `.`.
+- Resolved relative spawn paths against caller cwd instead of `/`.
+
+
+0.89 - 2026-09-19 - 91f517e
+--------------------------------
+- Replaced component hard failure with sandboxed OpenOS compatibility bridge.
+- Added mediated GPU, screen, keyboard, filesystem, internet, computer, and
+  EEPROM access without raw component-bus authority.
+- Added GPU get/maxResolution and seekable handles.
+
+
+0.88 - 2026-09-19 - 3daca03
+--------------------------------
+- Used installed SHA256SUMS as synchronized state instead of full-system hashing.
+- Reported actual changed-file download count.
+
+
+0.87 - 2026-09-19 - fe141bb
+--------------------------------
+- Multi-match completion now lists candidates and redraws prompt/input cleanly.
+
+
+0.86 - 2026-09-19 - b2b1710
+--------------------------------
+- Added Unicode-aware Left/Right, Home/End, Delete, and insertion editing.
+- Corrected history and clipboard cursor positioning.
+- Yielded during checksum scanning to avoid watchdog termination.
+- Cached changed-file set between update and upgrade.
+
+
+0.85 - 2026-09-19 - f88d27a
+--------------------------------
+- Wrapped long shell input across rows and scrolled correctly at screen bottom.
+- Prevented modifiers/control keys from appearing as text.
+
+
+0.84 - 2026-09-19 - 97aae58
+--------------------------------
+- Added generated SHA256SUMS and mksums.lua.
+- Downloaded only changed OS files and verified each before installation.
+- Detected stale checksum indexes and fell back to full update.
+- Accepted valid zero-byte shipped files.
+
+
+0.83 - 2026-09-19 - c3f6e22
+--------------------------------
+Web installer and package-removal safety.
+
+- Added standalone webinstall.lua for installation from stock OpenOS.
+- Added manifest download, disk selection, streaming copy, account setup,
+  labeling, boot-address setup, retry/reporting, and documentation.
+- Accepted legitimate zero-byte files.
+- Prevented package remove/upgrade from recursively deleting shared non-empty
+  directories such as /bin or /usr.
+
+
+0.82 - 2026-09-19 - 4b583d0
+--------------------------------
+- Fixed clipboard event layouts across different OpenComputers runtimes.
+
+
+0.81 - 2026-09-19 - dc76cd6
+--------------------------------
+- Added clipboard paste to kernel line editor.
+- Queued multiline clipboard content as submitted input lines.
+
+
+0.8 - 2026-09-19 - ceb6d53 / ca1a4f2
+--------------------------------------------
+Debian-inspired package system.
+
+- Added streaming fpkg archives and RFC822 control metadata.
+- Added Debian-style version comparison, dependencies, alternatives, Provides,
+  conflicts, upgrades, and autoremove.
+- Added apt, dpkg, dpkg-deb, and apt-ftparchive.
+- Added package indexes, SHA256/size verification, lifecycle scripts,
+  conffiles, status database, cache management, and repository tooling.
+- Moved manifest OS updating behind temporary `apt sysupdate/sysupgrade` flows.
+- Added Debian-style `deb` repository source lines.
+
+Compatibility break:
+- Ordinary apt commands became package-oriented; OS update temporarily moved to
+  `sys*` subcommands until 0.95.
+
+
+0.71 - 2026-09-19 - 66f6c4c
+---------------------------------
+Low-memory shared runtime.
+
+- Compiled selected core libraries once per machine with process-dispatched
+  freax/io/os proxies.
+- Kept stateful/transient libraries per process for reclamation.
+- Added computer, unicode, and pure-Lua bit32 require shims.
+- Deferred devfs and authentication loading to reduce boot memory.
+- Corrected unsupported reader-function load attempt to table.concat/load.
+- Added robust internet-card discovery and fd-backed internet streams.
+- Made Ctrl+C kill foreground command trees with status 130.
+- Added kernel log ring, installer/selfcheck diagnostics, and dmesg output.
+- Prevented manual second systemd instance and surprise relogin.
+- Added update cache-busting and shell REPL pcall protection.
+
+
+0.7 - 2026-09-18 - ddadb4e
+--------------------------------
+Large OpenOS compatibility and utility expansion.
+
+- Ported/expanded ls, cp, mv, grep, find, tree, ps, dmesg, less, head, du,
+  mount, rm, rmdir, edit, and many related tools/options.
+- Added cd, clear, rc, set, source, unset, useradd, and userdel.
+- Added actual mounts, read-only mounts, process-handle APIs, io.popen, improved
+  pipes/TTY streams, and broad OpenOS-compatible libraries.
+- Replaced shell execution path with reusable lib/sh.lua.
+- Added lazy devfs framework, PATH completion, temporary autorun support,
+  terminal GPU/ANSI methods, and process views.
+- Fixed event/Ctrl+C handling, temp files, command lookup, sleep interruption,
+  shutdown handling, and many command exit/option bugs.
+
+
+0.6 - 2026-09-18 - d960be0
+--------------------------------
+Accounts, installer, FHS layout, services, and updater.
+
+- Added passwd/shadow accounts, login, passwd, su, masked passwords, and
+  getty-style sessions.
+- Reworked installer into one full 4K-streamed low-memory install path.
+- Added target verification, drive labels, account DB generation, and /home
+  preservation; stopped shipping live credential databases.
+- Reorganized repository to mirror installed FHS tree.
+- Added PID 1 service manager, systemctl, unit startup, console fallback, and
+  service status.
+- Made scheduler resume live processes each tick so daemons progress when idle.
+- Added Unicode-safe keyboard input and many login/terminal fixes.
+- Added VERSION, manifest-driven installation, and first in-game apt updater.
+- Removed destructive fresh-media demo wipe.
+
+Compatibility break:
+- Flat media layout moved to FHS, with temporary boot fallbacks for old media.
+
+
+0.5 - 2026-09-17 - 6d6c45f
+--------------------------------
+- Unified visible branding/version as Freax 0.5.
+- Added reliable exit-code propagation and typeahead while waiting.
+- Added file-backed stdio duplication and inherited cwd/environment.
+- Added virtual RAM symlinks, ln, man, and initial manual pages.
+- Symlinks intentionally disappeared on reboot, matching OpenOS behavior.
+
+
+Prototype 0.1 kernel / 0.2 userland - 2026-09-17 - 8f2c472
+----------------------------------------------------------------
+- Initial coroutine scheduler and private process environments.
+- Added kernel-mediated hardware, VFS/mounts, pipes, fd I/O, networking, and
+  terminal support.
+- Added broad first command set and early shell pipelines, redirects, boolean
+  chains, aliases, source, foreground waits, and job scaffolding.
+- Kernel and userland reported different prototype versions; no VERSION file
+  existed yet.

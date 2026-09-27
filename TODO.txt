@@ -1,0 +1,608 @@
+FREAX ROADMAP
+==============
+
+Purpose
+-------
+This file tracks work across development sessions. Keep completed work marked,
+add discoveries under the relevant milestone, and update dependencies when an
+implementation changes the design.
+
+Target
+------
+Freax should combine Linux/Unix process, filesystem, account, shell, and
+administration semantics with useful OpenOS application compatibility. It must
+remain practical near the current 384K memory floor. Linux-like behavior is the
+primary design goal; OpenOS compatibility is a mediated compatibility layer,
+not permission to bypass kernel hardware authority.
+
+Current baseline: 1.08
+----------------------
+[x] Coroutine processes with private environments and kernel-owned PIDs.
+[x] UID/EUID/GID/EGID credentials and restricted spawnAs.
+[x] Process groups and TERM/KILL/INT/STOP/CONT signals.
+[x] VFS mounts, read-only mounts, fd-backed I/O, pipes, and RAM symlinks.
+[x] Login, passwd, su, package management, installer, and service manager.
+[x] Shell pipelines, redirects, boolean chains, aliases, globbing, source,
+    positional parameters, multiline if, and finite for.
+[x] Incremental checksummed system updates and package verification.
+[ ] Background shell jobs and controlling-terminal process groups.
+[ ] Persistent owner/group/mode metadata and durable symlinks.
+[ ] Supplementary groups and /etc/group.
+[ ] Useful procfs and populated devfs.
+[ ] fstab, hotplug policy, modem support, signed repositories, and rollback.
+
+Rules applying to every milestone
+---------------------------------
+[ ] Preserve operation near the 384K practical minimum.
+[ ] Stream file, network, package, archive, and checksum data in 4K chunks.
+[ ] Never append chunks with repeated large-string concatenation.
+[ ] Bound every queue, cache, history, log, metadata table, and IPC channel.
+[ ] Keep optional subsystems lazy-loaded and per-process when possible.
+[ ] Do not expand the kernel SHARED allowlist without measured justification.
+[ ] Keep hardware authority in the kernel; user programs use mediated APIs.
+[ ] Validate credentials and permissions in syscalls, not only commands.
+[ ] Preserve normal-exec effective-ID reset and a minimal setuid surface.
+[ ] Fail closed when security metadata is corrupt or ambiguous.
+[ ] Syntax-check every changed Lua file individually with LuaJIT.
+[ ] Extend /selfcheck.lua for every new runtime contract.
+[ ] Distinguish host syntax checks from in-game behavioral validation.
+[ ] Test read-only media, installed HDD, low memory, full disk, and missing
+    optional hardware where relevant.
+[ ] Add every new installed file to manifest.
+[ ] Regenerate SHA256SUMS after every manifest-file change.
+[ ] Bump VERSION for every shipped OS change, then commit and push the release.
+
+Dependency order
+----------------
+M6  Baseline contracts and measurement.
+M7  Process lifecycle, signals, sessions, and controlling TTY.
+M8  Background jobs and shell language completion.
+M9  Persistent filesystem metadata and durable links.
+M10 Users, groups, authentication, and permission migration.
+M11 procfs, devfs, and local IPC.
+M12 fstab, mount lifecycle, and hardware hotplug.
+M13 Services, logging, and cron.
+M14 Coreutils and archive interoperability.
+M15 Modem, networking, and component compatibility.
+M16 Package trust, transactions, and rollback.
+M17 Terminal and OpenOS application compatibility.
+M18 Documentation, tests, optimization, and release hardening.
+
+
+M6 - Baseline contracts, tests, and performance budgets
+=======================================================
+Goal: make later architectural work measurable and regression-safe.
+
+Scope
+-----
+[ ] Document stable syscall, VFS, process, signal, shell, package, and
+    compatibility contracts.
+[ ] Record supported, partial, planned, and deliberately unsupported OpenOS
+    APIs.
+[ ] Inventory commands and missing man pages automatically.
+[ ] Refactor selfcheck into named sections while retaining one entry point.
+[ ] Add cleanup registration, explicit skips, expected/actual diagnostics,
+    and final failure summary.
+[ ] Add host-side tests for pure parsers and algorithms: shell, units,
+    accounts, dependencies, archives, future fstab, and metadata records.
+[ ] Record boot free memory, shell free memory, post-process recovery,
+    scheduler cost, and 4K filesystem throughput.
+[ ] Define acceptable memory deltas for each future daemon and shared module.
+
+Acceptance
+----------
+[ ] Every current subsystem has a test or an explicit untested marker.
+[ ] Repeated transient commands show no unbounded retained-memory growth.
+[ ] Baseline numbers exist for 384K-class and larger machines.
+[ ] Missing optional components produce clear errors or skips, never crashes.
+
+Deferred
+--------
+- Full host emulation of OpenComputers.
+- Heavy test frameworks installed on target machines.
+
+
+M7 - Process lifecycle, signals, sessions, and controlling TTY
+================================================================
+Goal: provide kernel substrate required for real Unix job control.
+
+Process model
+-------------
+[ ] Add session IDs, session leaders, controlling TTY IDs, and terminal
+    foreground process-group IDs.
+[ ] Spawn all stages of a pipeline directly into one PGID without races.
+[ ] Track running, sleeping, pipe-wait, event-wait, stopped, zombie, and
+    exited states accurately.
+[ ] Add non-blocking wait and child state-change reporting.
+[ ] Preserve exit status until parent reap; keep orphan/zombie storage bounded.
+[ ] Reparent or explicitly reap orphaned children through PID 1.
+[ ] Notify parents of child exit/stop/continue without process-table polling.
+
+Signals
+-------
+[ ] Add HUP, QUIT, PIPE, CHLD, and TSTP to existing signals.
+[ ] Keep KILL and STOP uncatchable.
+[ ] Add default, ignore, and safe-point handler dispositions.
+[ ] Coalesce and bound pending signals.
+[ ] Generate PIPE when writing to a pipe with no readers.
+[ ] Generate CHLD for child state transitions.
+[ ] Route Ctrl+C to terminal foreground PGID.
+[ ] Route Ctrl+Z to foreground PGID as TSTP.
+[ ] Send HUP to applicable jobs when terminal session ends.
+
+Security
+--------
+[ ] Keep same-UID-or-root signal authorization.
+[ ] Prevent users moving unrelated processes between groups or sessions.
+[ ] Restrict detailed waits and process inspection to parent, same UID where
+    safe, or root.
+[ ] Keep PID 1 immune to terminal stop signals.
+
+Acceptance
+----------
+[ ] Three-stage pipeline owns one PGID and leaves no zombie.
+[ ] Ctrl+C kills only foreground job, not shell or services.
+[ ] Ctrl+Z stops foreground job; CONT resumes it.
+[ ] Stopped processes consume no scheduler CPU.
+[ ] Broken-pipe writes fail and cannot deadlock.
+[ ] Orphans are eventually reaped; queues remain bounded under signal floods.
+
+Deferred
+--------
+- fork, address spaces, copy-on-write, ptrace, priorities, and realtime signals.
+- Asynchronous interruption inside arbitrary Lua or native component calls.
+
+
+M8 - Background jobs and shell language completion
+==================================================
+Dependencies: M7.
+
+Job control
+-----------
+[ ] Parse '&' as background terminator.
+[ ] Launch complete pipelines as one job and process group.
+[ ] Implement job IDs and %n, %+, %-, and %prefix selection.
+[ ] Implement jobs, fg, bg, wait, and job-aware kill.
+[ ] Track running, stopped, completed, exited, and signaled jobs.
+[ ] Print completion notices only at safe prompt boundaries.
+[ ] Prevent background jobs reading terminal input.
+[ ] Use /dev/null for implicit background stdin after devfs support lands.
+[ ] Run pipeline/background builtins in child shell contexts.
+[ ] Preserve parent effects only for standalone cd/export/alias/source/exit.
+
+Language
+--------
+[ ] Add while, until, break, and continue.
+[ ] Add shell functions with bounded recursion and local positional scope.
+[ ] Add case, return, shift, and trap.
+[ ] Add $() substitution with nesting and a strict output-size limit.
+[ ] Add streaming here-documents through temporary files.
+[ ] Define field splitting, quoting, comments, and assignment semantics.
+[ ] Add NAME=value and NAME=value command forms.
+[ ] Improve syntax errors with source path, line, and construct.
+[ ] Add shebang dispatch for extensionless scripts.
+
+Acceptance
+----------
+[ ] sleep 10 &, jobs, fg, Ctrl+Z, bg, and wait work predictably.
+[ ] Background pipelines never steal shell input.
+[ ] Builtins work in pipelines without mutating parent state.
+[ ] TERM/INT traps can clean temporary files.
+[ ] Recursion and substitution limits fail cleanly.
+
+Deferred
+--------
+- Full Bash/POSIX conformance, arrays, process substitution, and coprocesses.
+
+
+M9 - Persistent filesystem metadata and durable symlinks
+=======================================================
+Goal: replace path-only security with Unix owner/group/mode semantics.
+
+Metadata
+--------
+[ ] Design versioned per-filesystem metadata for UID, GID, mode, and symlink
+    target.
+[ ] Protect metadata storage from ordinary VFS access.
+[ ] Use canonical mount-relative paths and reject traversal or duplicates.
+[ ] Use atomic temp-write/rename plus compact recovery journal.
+[ ] Avoid rewriting or loading the full metadata database per operation.
+[ ] Define safe defaults for legacy and externally modified disks.
+[ ] Detect stale records without granting extra access.
+
+VFS integration
+---------------
+[ ] Add stat, lstat, chmod, chown, and access checks.
+[ ] Enforce directory search permission.
+[ ] Persist symlinks across reboot with cycle/depth protection.
+[ ] Preserve metadata across rename, copy, package install, and update.
+[ ] Remove metadata safely on file and recursive directory removal.
+[ ] Report mount metadata capability.
+[ ] Track open files and cwd references for later busy-unmount checks.
+[ ] Teach ls, find, cp, mv, install, dpkg, and sysupdate about metadata.
+[ ] Extend fpkg entries with mode, owner, group, and durable symlink data.
+
+Acceptance
+----------
+[ ] Ownership, modes, and symlinks survive reboot.
+[ ] Users cannot traverse or modify unauthorized paths.
+[ ] Rename/remove/package/update operations leave recoverable metadata.
+[ ] Corrupt metadata fails closed and reports repair guidance.
+[ ] Legacy disks boot with documented conservative defaults.
+
+Deferred
+--------
+- ACLs, xattrs, capabilities, hard links, quotas, and immutable flags.
+
+
+M10 - Users, groups, authentication, and permission migration
+================================================================
+Dependencies: M9.
+
+Accounts and groups
+-------------------
+[ ] Add /etc/group and supplementary groups in kernel credentials.
+[ ] Add groupadd, groupdel, groupmod, usermod, id, groups, and getent.
+[ ] Allocate IDs safely across deleted and system accounts.
+[ ] Update passwd, shadow, and group atomically.
+[ ] Support account locks, disabled login, system users, and validated homes.
+
+Authentication
+--------------
+[ ] Replace fast salted SHA-256 with versioned iterated password hashing.
+[ ] Read old hashes and migrate after successful authentication.
+[ ] Compare hashes in constant time where practical.
+[ ] Add bounded login retries and scheduler-friendly delay.
+[ ] Minimize password lifetime in reusable strings and logs.
+
+Permission migration
+--------------------
+[ ] Replace home-path confinement with owner/group/mode checks.
+[ ] Apply secure defaults to shadow, keys, homes, temp, binaries, and libs.
+[ ] Add umask for file creation.
+[ ] Replace hardcoded setuid paths with audited metadata only after M9.
+[ ] Disable setuid on writable untrusted/removable mounts by default.
+
+Acceptance
+----------
+[ ] Distinct users cannot alter each other's private files.
+[ ] Shared group access works and supplementary groups survive login.
+[ ] Account updates cannot leave databases inconsistent.
+[ ] Legacy hashes migrate safely.
+[ ] Users cannot create effective privileged executables.
+
+Deferred
+--------
+- PAM, LDAP, sudo policy language, full password aging, and capabilities.
+
+
+M11 - procfs, devfs, and local IPC
+=================================
+Dependencies: M7, M9, M10.
+
+procfs
+------
+[ ] Add lazy /proc/self and /proc/<pid>/{status,cmdline,cwd,fd}.
+[ ] Add /proc/{mounts,uptime,meminfo,version}.
+[ ] Filter process data by credentials.
+[ ] Generate files on demand without whole-table snapshots.
+[ ] Handle process disappearance as a normal race.
+
+devfs
+-----
+[ ] Add /dev/null, /dev/zero, /dev/tty, and stdio links.
+[ ] Add an honestly documented random source only with clear entropy quality.
+[ ] Register mediated component nodes dynamically.
+[ ] Apply owner/group/mode policy and remove stale nodes on hot-unplug.
+[ ] Keep devfs lazy and memory-bounded.
+
+IPC
+---
+[ ] Add bounded local message channels under /run.
+[ ] Support blocking/non-blocking operation and peer PID/UID/GID credentials.
+[ ] Define closure, timeout, backpressure, and wakeup behavior.
+[ ] Add multi-fd/channel poll only if memory cost remains acceptable.
+[ ] Migrate service control away from command-file polling.
+[ ] Keep global hardware-event injection unavailable to untrusted processes.
+
+Acceptance
+----------
+[ ] procfs diagnostics expose no protected cross-user data.
+[ ] Standard dev nodes match documented behavior.
+[ ] IPC flooding cannot grow memory without bound.
+[ ] Peer death wakes blocked clients with deterministic errors.
+[ ] procfs/devfs cost almost no memory before first access.
+
+Deferred
+--------
+- Shared memory, mmap, fd passing, Linux ioctl compatibility, POSIX semaphores.
+
+
+M12 - fstab, mount lifecycle, and hardware hotplug
+=================================================
+Dependencies: M9 and M11.
+
+Scope
+-----
+[ ] Add compact /etc/fstab: address/prefix/label, mount path, ro/rw,
+    auto/noauto, nofail, and nosuid.
+[ ] Mount /run, /dev, and /proc in deterministic boot order.
+[ ] Retain documented fallback behavior when fstab is absent.
+[ ] Reject ambiguous prefixes and duplicate labels safely.
+[ ] Add root-owned hotplug manager for component add/remove.
+[ ] Add policy-driven automount without autorun.
+[ ] Refuse normal unmount while files, cwd, or services use the mount.
+[ ] Notify dependent services about mount arrival/removal.
+[ ] Enforce nosuid in kernel.
+
+Acceptance
+----------
+[ ] Required mounts precede dependent services.
+[ ] nofail devices do not block boot.
+[ ] Hot-added media appears at configured path.
+[ ] Busy removal never leaves valid-looking stale handles.
+[ ] Existing installations without fstab keep working.
+
+Deferred
+--------
+- Network, bind, overlay, encrypted, and RAID filesystems.
+
+
+M13 - Service management, logging, and cron
+===========================================
+Dependencies: M7, M10, M11, M12.
+
+Services
+--------
+[ ] Replace command-file polling with authenticated IPC.
+[ ] Keep compact unit format; do not clone full systemd.
+[ ] Add User, Group, Environment, WorkingDirectory, Requires, Wants, After,
+    restart policy, timeouts, mount/component requirements, and log targets.
+[ ] Stop complete service process groups with TERM then timed KILL.
+[ ] Add restart-rate limiting and accurate exit/signal status.
+[ ] Separate enable state from package-owned unit files.
+[ ] Validate complete reload before replacing active configuration.
+[ ] Provide console recovery after repeated service failure.
+
+Logging
+-------
+[ ] Add logger and a small log service.
+[ ] Record source, severity, timestamp, PID, UID, and service.
+[ ] Use bounded rings and streamed files.
+[ ] Add strict size-based rotation.
+[ ] Never block clients forever on full/read-only disks.
+[ ] Add logread filtering and secret-redaction rules.
+
+Cron
+----
+[ ] Add minute-resolution system and per-user schedules.
+[ ] Run jobs with target credentials and sanitized environment.
+[ ] Avoid duplicate execution after clock changes or restart.
+[ ] Bound job output and prevent optional overlaps.
+
+Acceptance
+----------
+[ ] Service control uses authenticated IPC.
+[ ] Crash loops rate-limit; stop kills whole process group.
+[ ] Services run with configured credentials.
+[ ] Logs remain bounded under failure.
+[ ] Cron runs jobs under correct identity.
+
+Deferred
+--------
+- Full systemd semantics, cgroups, journald format, distributed logging.
+
+
+M14 - Coreutils and archive interoperability
+============================================
+Dependencies: M9-M11.
+
+Utilities
+---------
+[ ] Add stat, chmod, chown, chgrp, umask, id, groups, and readlink.
+[ ] Add tail, tee, cut, tr, uniq, printf, test/[ ], true, false, xargs,
+    basename, dirname, realpath, sha256sum, diff, patch, and logger.
+[ ] Improve cp, mv, rm, find, ls, du, and install for metadata, links,
+    cross-filesystem behavior, cycle safety, and partial-write cleanup.
+[ ] Standardize exit statuses and stderr messages.
+[ ] Reject unsupported GNU flags instead of silently ignoring them.
+
+Archives
+--------
+[ ] Add streaming uncompressed tar create/list/extract/verify.
+[ ] Preserve supported owner/group/mode/link metadata.
+[ ] Reject absolute paths, traversal, duplicates, and symlink escape.
+[ ] Extract through temporary files plus rename where possible.
+[ ] Bound path length, entry count, and file size.
+[ ] Evaluate optional measured compression; never require it for backups.
+
+Acceptance
+----------
+[ ] cp -a preserves every supported metadata field.
+[ ] ls -l reports real mode, owner, group, time, and link target.
+[ ] Archives larger than RAM work and cannot escape destination.
+[ ] Coreutils behave through pipes and redirected stdio.
+
+Deferred
+--------
+- Complete GNU option parity and mandatory gzip/bzip2/xz.
+
+
+M15 - Modem, networking, and component compatibility
+====================================================
+Dependencies: M10, M11, M13.
+
+Component bridge
+----------------
+[ ] Define audited per-component method allowlists.
+[ ] Add safe generic read-only invocation where useful.
+[ ] Require privilege/capability policy for actuating methods.
+[ ] Improve methods, doc, type, get, proxy, and primary behavior.
+[ ] Track add/remove and primary failover.
+[ ] Correct filesystem proxy capacity, read-only, label, and address behavior.
+
+Modem
+-----
+[ ] Add mediated open/close/isOpen/send/broadcast APIs.
+[ ] Route messages only to processes bound to relevant ports.
+[ ] Bound per-port and per-process receive queues.
+[ ] Validate address, port, distance, and payload sizes.
+[ ] Add service-level modem/component policy.
+[ ] Support documented OpenOS component.modem subset.
+
+Internet
+--------
+[ ] Add request/socket timeouts and cancellation.
+[ ] Bound headers, metadata, sockets, and pending requests.
+[ ] Wake handles cleanly on card removal.
+[ ] Add per-service network policy.
+
+Acceptance
+----------
+[ ] Representative OpenOS modem examples work within documented subset.
+[ ] Unprivileged processes cannot steal queues or use forbidden ports.
+[ ] Event floods stay bounded; card removal fails handles deterministically.
+
+Deferred
+--------
+- Full TCP/IP over modem, DNS, built-in TLS, and unrestricted component.invoke.
+
+
+M16 - Package trust, transactions, and rollback
+================================================
+Dependencies: M9, M10, M13, M14.
+
+Trust
+-----
+[ ] Sign repository Release and sys metadata.
+[ ] Add protected trusted-key store and repository key pinning.
+[ ] Verify signatures before trusting hashes.
+[ ] Reject unsigned, wrong-key, replayed, or unauthorized downgraded metadata.
+[ ] Keep SHA256 checks for indexes, archives, and installed files.
+[ ] Add root-only key management tools.
+
+Package metadata
+----------------
+[ ] Store mode, UID, GID, and links in fpkg.
+[ ] Record ownership for every installed path.
+[ ] Reject file collisions before unpack.
+[ ] Minimize maintainer-script environment and bound output.
+[ ] Add declarative service reload/restart actions where possible.
+
+Transactions
+------------
+[ ] Journal mutations on disk before changing live state.
+[ ] Stage downloads and replacements on destination filesystem.
+[ ] Preflight space, dependencies, conflicts, metadata, and writable mounts.
+[ ] Commit files and package DB in recoverable order.
+[ ] Retain bounded changed-file backups.
+[ ] Recover or roll back incomplete transactions on boot/next invocation.
+[ ] Plan sys and package changes as one transaction.
+[ ] Add rollback of most recent completed transaction where possible.
+
+Acceptance
+----------
+[ ] Tampered metadata or archives fail before installation.
+[ ] Failure at each phase leaves old, new, or explicitly recoverable state.
+[ ] Rollback restores supported files, metadata, and package DB.
+[ ] Recovery works without loading full transaction into RAM.
+
+Deferred
+--------
+- Rollback of arbitrary maintainer-script side effects.
+- Full Debian package compatibility and whole-filesystem snapshots.
+
+
+M17 - Terminal and OpenOS application compatibility
+===================================================
+Dependencies: M7, M8, M11, M15.
+
+Terminal
+--------
+[ ] Separate terminal device state from process state.
+[ ] Add foreground PGID, session ownership, and hangup behavior.
+[ ] Add canonical/raw modes, echo, erase, kill-line, EOF, interrupt, and
+    suspend characters.
+[ ] Add size-change notification.
+[ ] Restore terminal state after program exit or crash.
+[ ] Expand ANSI/VT100 only for real application needs.
+[ ] Preserve Unicode cursor and width handling.
+
+Consoles and compatibility
+--------------------------
+[ ] Measure lightweight virtual-console feasibility.
+[ ] Add multiple login sessions only within memory budget.
+[ ] Improve term, tty, keyboard, screen, GPU, and primary APIs.
+[ ] Test representative OpenOS editors, pagers, installers, and TUIs.
+[ ] Publish terminal capability and incompatibility matrix.
+
+Acceptance
+----------
+[ ] Only foreground jobs receive terminal input and generated signals.
+[ ] Raw-mode applications restore shell usability after exit/crash.
+[ ] Editors and pagers handle interruption, resize, Unicode, and clipboard.
+[ ] Optional consoles remain disabled if minimum-memory target cannot hold them.
+
+Deferred
+--------
+- GUI desktop, terminfo database, and multi-GPU window composition.
+
+
+M18 - Documentation, tests, optimization, and release hardening
+================================================================
+Dependencies: all milestones targeted for release.
+
+Documentation
+-------------
+[ ] Keep README milestone/status accurate.
+[ ] Document boot, scheduler, signals, VFS metadata, permissions, proc/dev/IPC,
+    mounts, services, package recovery, components, and memory model.
+[ ] Add admin guides for install/recovery, users/groups, fstab, services,
+    logging, cron, keys, and rollback.
+[ ] Add developer guides for syscalls, compatibility, packages, and low-memory
+    code.
+[ ] Add man pages for every command and configuration format.
+[ ] Document every intentional Linux/OpenOS incompatibility.
+
+Testing and performance
+-----------------------
+[ ] Maintain subsystem in-game regression sections.
+[ ] Add second-HDD install/update tests and fault-injection checklists.
+[ ] Test minimum/recommended hardware, no internet, no tmpfs, read-only root,
+    and removable media.
+[ ] Build representative OpenOS application corpus.
+[ ] Audit whole-file reads, string concatenation, process-table scans, polling,
+    histories, logs, caches, and proc output.
+[ ] Measure scheduler scaling and library reclamation.
+
+Release gates
+-------------
+[ ] Syntax-check every shipped Lua file.
+[ ] Pass full in-game selfcheck.
+[ ] Pass fresh install and previous-version upgrade.
+[ ] Pass interrupted-update recovery and multi-user security matrix.
+[ ] Stay inside declared memory budget.
+[ ] Keep manifest and SHA256SUMS current.
+[ ] List migrations, reboot needs, breaks, and deferrals in release notes.
+
+
+Long-term non-goals unless concrete need appears
+================================================
+- Full Linux syscall/ABI compatibility, ELF, MMU isolation, fork, or SMP.
+- Complete Bash, GNU coreutils, systemd, Debian, or POSIX compatibility.
+- ACLs, xattrs, hard links, quotas, mmap, or general block drivers.
+- Kernel/removable-media autorun.
+- Unrestricted raw hardware access.
+- Built-in SSH/TLS/full TCP/IP stack without measured feasible design.
+- GUI desktop or mandatory virtual consoles.
+- Global loading of optional compatibility libraries that raises memory floor.
+
+Definition of done for long-term target
+=======================================
+Freax qualifies as lightweight Linux-like and OpenOS-compatible when it has
+reliable jobs/signals/shell scripting; persistent permissions and links;
+multi-user group authorization; useful proc/dev and bounded local IPC;
+deterministic mounts and hotplug; credential-aware services/logging/cron;
+streaming utilities and archives; safe modem/component APIs; signed and
+recoverable updates; adequate controlling-terminal behavior; and repeatable
+in-game tests with measured memory budgets.

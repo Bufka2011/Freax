@@ -120,4 +120,17 @@ features rather than duplicating that status here.
   changed; inspect `git status`.
 - Never commit ignored in-game leftovers such as `s_*.txt`, `*.bak`,
   `dmesg_dump.txt`, or `iotest.txt`.
-- Do not commit unless the user explicitly requests it.
+- Do not commit developer-only changes unless the user explicitly requests it;
+  shipped OS changes always follow the release rule below.
+
+## OS Release Rule
+
+- Any change to the shipped OS, including code, installed configuration,
+  commands, libraries, kernel, boot files, man pages, or other manifest content,
+  requires a `VERSION` bump.
+- After the bump, regenerate `SHA256SUMS`, syntax-check every changed Lua file,
+  commit all intended release files, and push the current branch.
+- Verify the final worktree is clean and synchronized with its upstream branch.
+- Do not leave OS changes unversioned, uncommitted, or unpushed.
+- Developer-only repository records outside `manifest` (`AGENTS.md`, `TODO.txt`,
+  and `CHANGELOG`) do not require a release bump when changed alone.
