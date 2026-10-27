@@ -58,6 +58,18 @@ check("path completion", #completions == 1 and completions[1] == "/selfcheck.lua
 local shellContext = sh.newContext("probe", {"one", "two words"})
 check("shell positional", sh.expand("$0:$1:${2}:$#", shellContext)
   == "probe:one:two words:2")
+-- expansion is a single left-to-right pass: substituted values are DATA,
+-- inserted exactly once, so a $ or % inside them must stay literal (and
+-- must not blow up gsub templates). Old 4-pass code re-expanded data.
+os.setenv("SC_DATA", "${HOME}%s%1")
+check("expand data-not-code", sh.expand("$SC_DATA", shellContext)
+  == "${HOME}%s%1")
+check("expand dollar-trailing", sh.expand("cost $", shellContext) == "cost $")
+-- command substitution output is data too: parse_sub mutes $ in captured
+-- text so evaluate() never re-expands it (marker \31 is stripped later)
+local okSub, subbed = pcall(sh.internal.parse_sub, "x`echo '$HOME ninety'`y")
+check("cmdsub data-not-code", okSub ~= nil and okSub
+  and subbed:gsub("\31", "") == "x$HOME ninetyy")
 local parsed = sh.parseScript({
   "if ls /; then", "for x in \"$@\"; do", "echo $x", "done", "fi",
 })
@@ -220,6 +232,64 @@ if sleeper then
   check("wait-term", freax.wait(sleeper) == 143)
 end
 
+section("kill -9 and shell builtin")
+-- numeric signal on a group: exit 137 = 128 + 9
+local sleeper9 = freax.spawn("sc-sleep9", "/bin/sleep.lua", {"30"})
+if type(sleeper9) == "number" then
+  check("kill-numeric9-group", freax.kill(-sleeper9, 9) == true)
+  check("wait-numeric9-137", freax.wait(sleeper9) == 137)
+else
+  skip("kill -9", "no spawn")
+end
+-- the shell builtin parses a leading numeric option as the signal, too
+local sleeperB = freax.spawn("sc-sleepb", "/bin/sleep.lua", {"30"})
+if type(sleeperB) == "number" then
+  local killPid = freax.spawn("sc-kill9", "/bin/sh.lua",
+    {"-c", "kill -9 " .. sleeperB})
+  check("sh-kill-numeric9-spawn", type(killPid) == "number")
+  check("sh-kill-numeric9-status", killPid and freax.wait(killPid) == 0)
+  check("sh-kill-numeric9-worked", freax.wait(sleeperB) == 137)
+else
+  skip("sh kill -9", "no spawn")
+end
+
+section("line editor (injected keys)")
+-- freax.injectKey feeds the same shared keystroke queue real hardware
+-- events land in; the probe script runs as its own process, sets a
+-- completer, then reads one line it does not have to compete for.
+local probePath = "/tmp/s_sc_tab.lua"
+local probeOut = "/tmp/s_sc_tab_out.txt"
+os.remove(probeOut)
+local probeFile = io.open(probePath, "w")
+if not probeFile then
+  skip("line editor", "no writable tmp")
+else
+  probeFile:write('freax.ttySetCompleter(function(line, pos)\n')
+  probeFile:write('  if (line or ""):sub(1, 4) == "alph" then return {"alphabet1.txt"} end\n')
+  probeFile:write('  return {}\n')
+  probeFile:write('end)\n')
+  probeFile:write('local line = freax.ttyReadLine()\n')
+  probeFile:write('local f = io.open("' .. probeOut .. '", "w")\n')
+  probeFile:write('if f then f:write(tostring(line)) f:close() end\nreturn 0\n')
+  -- characters a l p h, then Tab (code 15), then Enter (code 28)
+  for _, pair in ipairs({{97, "a"}, {108, "l"}, {112, "p"}, {104, "h"}}) do
+    check("inject " .. pair[2],
+      freax.injectKey("key_down", pair[1], pair[1]) == true)
+  end
+  check("inject tab", freax.injectKey("key_down", 9, 15) == true)
+  check("inject enter", freax.injectKey("key_down", 13, 28) == true)
+  local probePid = freax.spawn("sc-tab", probePath, {})
+  check("tab probe spawn", type(probePid) == "number")
+  check("tab probe finished", probePid and freax.wait(probePid) == 0)
+  local res = io.open(probeOut, "r")
+  local resData = res and res:read("*a") or ""
+  if res then res:close() end
+  -- single-match Tab completes and appends a trailing space
+  check("tab completes match", resData == "alphabet1.txt ", tostring(resData))
+  os.remove(probePath)
+  os.remove(probeOut)
+end
+
 -- credential boundary: a UID 1000 session must be confined to its home and
 -- /tmp/u1000, must not read /etc/shadow, write /etc, mount, or kill PID 1.
 section("credential boundary")
@@ -294,12 +364,23 @@ check("fdcount-self", type(freax.fdCount) == "function"
   and type(freax.fdCount(freax.getpid())) == "number")
 
 for _, c in ipairs({"list /", "components", "lshw", "address",
-  "primary gpu", "resolution", "wget", "pastebin", "df", "mount",
-  "apt version"}) do
+  "primary gpu", "resolution", "df", "mount", "apt version"}) do
   check("exec " .. c, os.execute(c) == true)
 end
+-- bare usage invocations fail cleanly with exit 1 (GNU convention),
+-- instead of exiting 0 with usage on stdout
+local _, wWhy, wCode = os.execute("wget")
+check("exec wget usage", wCode == 1)
+local _, pWhy, pCode = os.execute("pastebin")
+check("exec pastebin usage", pCode == 1)
+local _, whWhy, whCode = os.execute("which")
+check("exec which usage", whCode == 1)
+local _, scWhy, scCode = os.execute("systemctl")
+check("exec systemctl usage", scCode == 1)
 local execOk, execWhy, execCode = os.execute("ls /selfcheck-no-such-file")
 check("exec status", execOk == nil and execWhy == "exit" and execCode == 1)
+local helpOk = os.execute("systemctl help")
+check("exec systemctl help", helpOk == true)
 
 local pullStart = freax.uptime()
 check("event timeout", event.pull(0.1, "selfcheck-never") == nil

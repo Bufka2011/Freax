@@ -122,7 +122,10 @@ local function stopUnit(name)
   local s = services[name]
   if not s then return nil, "not loaded" end
   if s.status ~= "running" then return true end
-  local ok, err = freax.kill(s.pid)
+  -- spawns lead their own process group, so a negative pid stops the
+  -- service together with any children it filed under itself
+  local ok, err = freax.kill(-s.pid)
+  if not ok then ok, err = freax.kill(s.pid) end
   if not ok then return nil, err end
   s.status = "stopped"
   s.pid = nil
@@ -218,16 +221,18 @@ while true do
         local s = services[name]
         local lines = {}
         if name == "all" then
-        local lines = {}
-        for _, u in pairs(units) do
-          local s = services[u.name]
-          local st = (s and s.status) or "stopped"
-          local en = (u.enabled == "yes") and "enabled" or "disabled"
-          lines[#lines + 1] = string.format("%-16s %-8s %s (%s)", u.name, st, u.description or "", en)
-        end
-        if #lines == 0 then lines[#lines + 1] = "no units loaded" end
-        rsp = table.concat(lines, "\n")
-      elseif name == "systemd" then
+          local sorted = {}
+          for _, u2 in pairs(units) do sorted[#sorted + 1] = u2 end
+          table.sort(sorted, function(a, b) return a.name < b.name end)
+          for _, u in ipairs(sorted) do
+            local s2 = services[u.name]
+            local st = (s2 and s2.status) or "stopped"
+            local en = (u.enabled == "yes") and "enabled" or "disabled"
+            lines[#lines + 1] = string.format("%-16s %-8s %s (%s)", u.name, st, u.description or "", en)
+          end
+          if #lines == 0 then lines[#lines + 1] = "no units loaded" end
+          rsp = table.concat(lines, "\n")
+        elseif name == "systemd" then
           lines[#lines + 1] = "systemd (daemon) running"
         elseif s then
           lines[#lines + 1] = name .. " " .. (s.status or "unknown")
@@ -263,14 +268,22 @@ while true do
     if s.status == "running" and s.pid then
       local p = pidMap[s.pid]
       if not p or p.dead then
-        log(name, "exited (pid " .. s.pid .. ")")
+        -- reap first so on-failure can see the real exit status
+        local exitCode = freax.wait(s.pid)
+        log(name, "exited (pid " .. s.pid .. ")" .. (exitCode and (" code " .. exitCode) or ""))
         s.status = "exited"
         s.pid = nil
         local u = s.unit
-        if u and (u.restart == "always" or u.restart == "on-failure") then
+        if u and (u.restart == "always"
+          or (u.restart == "on-failure" and type(exitCode) == "number" and exitCode ~= 0)) then
           log(name, "restarting")
           local pid = freax.spawn(name, u.exec, {})
-          if pid then s.pid = pid s.status = "running" end
+          if pid then
+            s.pid = pid
+            s.status = "running"
+          else
+            log(name, "restart failed: spawn rejected")
+          end
         end
       end
     end

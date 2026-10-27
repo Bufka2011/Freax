@@ -5,8 +5,8 @@ local shell = require("shell")
 local text = require("text")
 
 if not freax.netAvail() then
-  io.stderr:write("This program requires an internet card to run.")
-  return
+  io.stderr:write("This program requires an internet card to run.\n")
+  return 1
 end
 
 local args, options = shell.parse(...)
@@ -16,8 +16,9 @@ if #args < 1 then
   io.write("Usage: wget [-fq] <url> [<filename>]\n")
   io.write(" -f: Force overwriting existing files.\n")
   io.write(" -q: Quiet mode - no status messages.\n")
-  io.write(" -Q: Superquiet mode - no error messages.")
-  return
+  io.write(" -Q: Superquiet mode - no error messages.\n")
+  io.stderr:write("wget: missing URL\n")
+  return 1
 end
 
 local url = text.trim(args[1])
@@ -36,35 +37,42 @@ end
 filename = text.trim(filename)
 if filename == "" then
   if not options.Q then
-    io.stderr:write("could not infer filename, please specify one")
+    io.stderr:write("could not infer filename, please specify one\n")
   end
-  return nil, "missing target filename"
+  return 1
 end
 filename = shell.resolve(filename)
 
 if fs.isDirectory(filename) then
-  return nil, "target is a directory"
+  io.stderr:write("target is a directory\n")
+  return 1
 end
 local preexisted = fs.exists(filename)
 if preexisted then
   if not options.f then
     if not options.Q then
-      io.stderr:write("file already exists")
+      io.stderr:write("file already exists\n")
     end
-    return nil, "file already exists"
+    return 1
   end
 end
 
 local tmp = filename .. ".wget-new"
 local backup = filename .. ".wget-old"
-if fs.exists(tmp) or fs.isLink(tmp) then return nil, "temporary path already exists: " .. tmp end
-if fs.exists(backup) or fs.isLink(backup) then return nil, "backup path already exists: " .. backup end
+if fs.exists(tmp) or fs.isLink(tmp) then
+  io.stderr:write("temporary path already exists: " .. tmp .. "\n")
+  return 1
+end
+if fs.exists(backup) or fs.isLink(backup) then
+  io.stderr:write("backup path already exists: " .. backup .. "\n")
+  return 1
+end
 local f, reason = io.open(tmp, "wb")
 if not f then
   if not options.Q then
-    io.stderr:write("failed opening file for writing: " .. reason)
+    io.stderr:write("failed opening file for writing: " .. reason .. "\n")
   end
-  return nil, "failed opening file for writing: " .. reason
+  return 1
 end
 if not options.q then
   io.write("Downloading... ")
@@ -87,7 +95,7 @@ if result then
     if not options.Q then
       io.stderr:write("HTTP request failed: " .. reason .. "\n")
     end
-    return nil, reason
+    return 1
   end
   if not options.q then
     io.write("success.\n")
@@ -100,7 +108,7 @@ if result then
     if not preserved then
       fs.remove(tmp)
       if not options.Q then io.stderr:write("failed preserving target: " .. tostring(perr) .. "\n") end
-      return nil, perr
+      return 1
     end
   end
   local renamed, rerr = fs.rename(tmp, filename)
@@ -108,7 +116,7 @@ if result then
     fs.remove(tmp)
     if preexisted then fs.rename(backup, filename) end
     if not options.Q then io.stderr:write("failed replacing target: " .. tostring(rerr) .. "\n") end
-    return nil, rerr
+    return 1
   end
   if preexisted then fs.remove(backup) end
 
@@ -124,6 +132,6 @@ else
   if not options.Q then
     io.stderr:write("HTTP request failed: " .. response .. "\n")
   end
-  return nil, response
+  return 1
 end
 return true

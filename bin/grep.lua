@@ -1,13 +1,40 @@
 local fs = require("fs")
 local shell = require("shell")
 
-local args, options = shell.parse(...)
-
 local function printUsage(ostream, msg)
   local s = ostream or io.stdout
   if msg then s:write(msg .. "\n") end
   s:write("Usage: grep [OPTION]... PATTERN [FILE]...\nExample: grep -i 'hello world' menu.lua main.lua\nfor more information, run: man grep\n")
 end
+
+-- GNU-style -e PATTERN (repeatable). shell.parse treats short options as
+-- plain boolean flags and cannot carry a value for -e, so -e specs are
+-- extracted from the raw argument list before parsing.
+local rawArgs = table.pack(...)
+local posArgs, ePatterns = {}, {}
+local stopOpts = false
+local i = 1
+while i <= rawArgs.n do
+  local p = rawArgs[i]
+  if not stopOpts and type(p) == "string" and p == "--" then
+    stopOpts = true
+    posArgs[#posArgs + 1] = p
+  elseif not stopOpts and type(p) == "string" and p == "-e" then
+    i = i + 1
+    if i > rawArgs.n or rawArgs[i] == nil then
+      printUsage(io.stderr, "grep: option requires an argument: e")
+      return 2
+    end
+    ePatterns[#ePatterns + 1] = rawArgs[i]
+  elseif not stopOpts and type(p) == "string" and p:sub(1, 2) == "-e" and #p > 2 then
+    ePatterns[#ePatterns + 1] = p:sub(3)
+  else
+    posArgs[#posArgs + 1] = p
+  end
+  i = i + 1
+end
+
+local args, options = shell.parse(table.unpack(posArgs))
 
 local pop = function(...)
   local result
@@ -18,8 +45,8 @@ local pop = function(...)
   return result
 end
 
-local plain = pop("F", "fixed-strings")
-plain = not pop("e", "--lua-regexp") and plain
+local plain = pop("F", "fixed-strings") == true
+if pop("lua-regexp") then plain = false end
 local pattern_file = pop("file")
 local match_whole_word = pop("w", "word-regexp")
 local match_whole_line = pop("x", "line-regexp")
@@ -53,21 +80,32 @@ if next(options) then
   return 0
 end
 
-local PATTERNS = {args[1]}
-local FILES = {select(2, table.unpack(args))}
+local regexpArg = pop("regexp")
+if type(regexpArg) == "string" and regexpArg ~= "" then
+  table.insert(ePatterns, 1, regexpArg)
+end
 
+-- Assemble patterns and files. GNU rules: any -e/--regexp/specified pattern
+-- file makes every positional argument a FILE; otherwise args[1] is the
+-- pattern and the rest are files.
+local PATTERNS, FILES = {}, {}
 if pattern_file then
   local pf, err = io.open(shell.resolve(pattern_file), "r")
   if not pf then stderr:write("grep: " .. pattern_file .. ": file not found\n"); return 2 end
-  table.insert(FILES, 1, PATTERNS[1])
-  PATTERNS = {}
   for line in pf:lines() do PATTERNS[#PATTERNS + 1] = line end
   pf:close()
 end
+if #ePatterns > 0 then
+  for j = #ePatterns, 1, -1 do table.insert(PATTERNS, 1, ePatterns[j]) end
+end
+if #PATTERNS > 0 then
+  FILES = args
+elseif args[1] then
+  PATTERNS = {args[1]}
+  FILES = {select(2, table.unpack(args))}
+end
 if #PATTERNS == 0 then printUsage(stderr); return 2 end
 if #FILES == 0 then FILES = search_recursively and {"."} or {"-"} end
-if not options.h and search_recursively then include_filename = true end
-if #FILES < 2 then include_filename = false end
 
 if ignore_case then
   for i = 1, #PATTERNS do
@@ -114,6 +152,7 @@ if search_recursively then
   end
   FILES = files
 end
+if #FILES < 2 then include_filename = false end
 
 local function readLines()
   local curHand, curFile, meta

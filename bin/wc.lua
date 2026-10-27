@@ -9,38 +9,51 @@ if opts.help then
 end
 if #args == 0 then args = { "-" } end
 
+local function columns(l, w, b)
+  if opts.l or opts.w or opts.c then
+    local cols = {}
+    if opts.l then cols[#cols + 1] = l end
+    if opts.w then cols[#cols + 1] = w end
+    if opts.c then cols[#cols + 1] = b end
+    return table.concat(cols, " ")
+  end
+  return l .. " " .. w .. " " .. b
+end
+
+local ec = 0
 local tl, tw, tb = 0, 0, 0
 for _, a in ipairs(args) do
-  local iter, close, err, label = nil, nil, nil, a
+  local src, close, err, label = nil, nil, nil, a
   if a == "-" then
-    iter = io.stdin:lines()
+    src = io.stdin
     label = ""
   else
-    local f
-    f, err = io.open(shell.resolve(a), "r")
-    if f then
-      iter = f:lines()
-      close = f
-    end
+    label = shell.resolve(a)
+    src, err = io.open(label, "r")
+    close = src
   end
-  if not iter then
+  if not src then
     io.stderr:write("wc: " .. a .. ": " .. tostring(err) .. "\n")
+    ec = 1
   else
     local l, w, b = 0, 0, 0
-    for line in iter do
-      l = l + 1
-      b = b + #line + 1
-      for _ in line:gmatch("%S+") do w = w + 1 end
+    local tailNonSpace = false -- previous chunk ended inside a word
+    while true do
+      local chunk = src:read(4096)
+      if not chunk or chunk == "" then break end
+      b = b + #chunk
+      l = l + select(2, chunk:gsub("\n", ""))
+      local runs = select(2, chunk:gsub("%S+", " "))
+      if tailNonSpace and chunk:find("%S") == 1 then runs = runs - 1 end
+      w = w + runs
+      tailNonSpace = chunk:sub(-1):match("%S") ~= nil
     end
     tl, tw, tb = tl + l, tw + w, tb + b
-    local tag = (a == "-") and "" or (" " .. a)
-    if opts.l then io.write(l .. tag .. "\n")
-    elseif opts.w then io.write(w .. tag .. "\n")
-    elseif opts.c then io.write(b .. tag .. "\n")
-    else io.write(l .. " " .. w .. " " .. b .. tag .. "\n") end
+    io.write(columns(l, w, b) .. ((a ~= "-") and (" " .. a) or "") .. "\n")
     if close then close:close() end
   end
 end
-if not (opts.l or opts.w or opts.c) and #args > 1 then
-  io.write(tl .. " " .. tw .. " " .. tb .. " total\n")
+if #args > 1 then
+  io.write(columns(tl, tw, tb) .. " total\n")
 end
+return ec

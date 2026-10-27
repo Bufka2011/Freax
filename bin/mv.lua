@@ -2,7 +2,8 @@ local fs = require("fs")
 local shell = require("shell")
 
 local args, opts = shell.parse(...)
-if #args < 2 or opts.help or opts.h then
+
+if opts.help or opts.h then
   io.write([[Usage: mv [OPTION]... SRC... DST
   -f            force; overwrite without prompting
   -i            prompt before overwriting (unless -f)
@@ -10,7 +11,14 @@ if #args < 2 or opts.help or opts.h then
   -v            verbose output
   --skip=PATH   skip the given (resolved) path
 ]])
-  return
+  return 0
+end
+
+if #args < 2 then
+  io.stderr:write("mv: missing file operand\n")
+  io.write([[Usage: mv [OPTION]... SRC... DST
+]])
+  return 1
 end
 
 local bForce = opts.f or opts.force
@@ -38,6 +46,12 @@ local dstRaw = table.remove(args)
 local dst = shell.resolve(dstRaw)
 local dstIsDir = fs.isDirectory(dst)
 local ec = 0
+if #args > 1 and not dstIsDir then
+  io.stderr:write("mv: target '" .. dstRaw .. "' is not a directory\n")
+  io.write([[Usage: mv [OPTION]... SRC... DST
+]])
+  return 1
+end
 
 local function moveOne(sRaw)
   local src = shell.resolve(sRaw)

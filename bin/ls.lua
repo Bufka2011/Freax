@@ -123,7 +123,7 @@ local function sortList(list)
   elseif sortTime then
     table.sort(list, function(a, b) return a.time > b.time end)
   elseif sortExt then
-    table.sort(list, function(a, b) return a.ext > b.ext end)
+    table.sort(list, function(a, b) return a.ext < b.ext end)
   else
     table.sort(list, function(a, b) return a.sortName < b.sortName end)
   end
@@ -140,7 +140,7 @@ local function displayFile(info)
     io.write(paint(info.name, info.color) .. "\n")
     return
   end
-  local typeChar = info.isLink and "l" or (info.isDir and "d" or "f")
+  local typeChar = info.isLink and "l" or (info.isDir and "d" or "-")
   local rw = (fs.isReadOnly and fs.isReadOnly(info.full)) and "-" or "w"
   local target = info.isLink and (" -> " .. tostring(info.link)) or ""
   io.write(string.format("%s-r%s %6s %s %s%s\n",

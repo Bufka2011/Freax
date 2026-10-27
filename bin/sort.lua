@@ -26,7 +26,7 @@ for _, a in ipairs(args) do
 end
 if opts.n then
   table.sort(lines, function(x, y)
-    return (tonumber(x:match("%d+")) or 0) < (tonumber(y:match("%d+")) or 0)
+    return (tonumber(x:match("^%s*[+-]?%d+")) or 0) < (tonumber(y:match("^%s*[+-]?%d+")) or 0)
   end)
 else
   table.sort(lines)

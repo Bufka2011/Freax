@@ -31,13 +31,14 @@ local home_shrc = shell.resolve(".shrc")
 if freax.fsExists(home_shrc) then
   local f = freax.fsOpen(home_shrc, "r")
   if f then
-    local content = ""
+    local parts = {}
     while true do
       local chunk = freax.fsRead(f, 4096)
       if not chunk then break end
-      content = content .. chunk
+      parts[#parts + 1] = chunk
     end
     freax.fsClose(f)
+    local content = table.concat(parts)
     if #content > 0 then
       local ok, err = load(content, ".shrc")
       if ok then pcall(ok) end

@@ -2,21 +2,21 @@
 
 ## P0 - Immediate bug-fix pack
 
-- [ ] Fix shell Tab completion crash: replace undefined global `ulen` with `bufLen`/`uwidth` in `boot/kernel/main.lua`; add an interactive-path test.
-- [ ] Fix `kill -9 123`: parse numeric signals separately from targets in `bin/kill.lua`.
-- [ ] Fix shell data→code re-expansion: make `sh.expand` single-pass and never re-expand substitution results (`lib/sh.lua`).
-- [ ] Bound event/history queues: cap `p.queue`, `keyQueue`, and `termSt.hist`; read `HISTSIZE` from `etc/profile.lua` instead of writing it unused.
-- [ ] Standardize exit codes: fix `wget` error branches, `cp`/`mv` usage errors, `systemctl` no-args, `man` pager path, and `which -h`; return GNU-like `1`/`2`, not `nil`/`255`.
-- [ ] Fix `cp`/`mv` multiple-source-to-non-directory behavior: error instead of silently clobbering.
-- [ ] Fix `df` path prefix matching (`/etc` must not match `/etcfoo`) with a trailing-slash check.
-- [ ] Fix `tree` date formatting: convert epoch milliseconds to seconds before `os.date("*t", ...)`.
-- [ ] Fix `wc`: correct byte count for files without trailing newline; support combining `-l -w`.
-- [ ] Fix `sort -n`: handle minus signs correctly.
-- [ ] Fix `ls`: make `-X` ascending, implement documented `-1`, and print `-` instead of `f` in long format.
-- [ ] Resolve/document `grep` divergences: `-e` means Lua regexp and `-C` means color; prefer `--color` and document intentional differences.
-- [ ] Fix `systemd`: capture exit code for `on-failure`; make `stopUnit` kill the service process group; remove shadowed `local lines`.
-- [ ] Remove O(n²) concatenation in `vfsReadFile`, `bin/sh.lua`, `etc/profile.lua`, `bin/pastebin.lua`, and `lib/devfs.lua`; use chunk buffers.
-- [ ] Deduplicate the symlink-scan block in `fsList`.
+- [x] Fix shell Tab completion crash: replace undefined global `ulen` with `bufLen`/`uwidth` in `boot/kernel/main.lua`; add an interactive-path test.
+- [x] Fix `kill -9 123`: parse numeric signals separately from targets in `bin/kill.lua`.
+- [x] Fix shell data→code re-expansion: make `sh.expand` single-pass and never re-expand substitution results (`lib/sh.lua`).
+- [x] Bound event/history queues: cap `p.queue`, `keyQueue`, and `termSt.hist`; read `HISTSIZE` from `etc/profile.lua` instead of writing it unused.
+- [x] Standardize exit codes: fix `wget` error branches, `cp`/`mv` usage errors, `systemctl` no-args, `man` pager path, and `which -h`; return GNU-like `1`/`2`, not `nil`/`255`.
+- [x] Fix `cp`/`mv` multiple-source-to-non-directory behavior: error instead of silently clobbering.
+- [x] Fix `df` path prefix matching (`/etc` must not match `/etcfoo`) with a trailing-slash check.
+- [x] Fix `tree` date formatting: convert epoch milliseconds to seconds before `os.date("*t", ...)`.
+- [x] Fix `wc`: correct byte count for files without trailing newline; support combining `-l -w`.
+- [x] Fix `sort -n`: handle minus signs correctly.
+- [x] Fix `ls`: make `-X` ascending, implement documented `-1`, and print `-` instead of `f` in long format.
+- [x] Resolve/document `grep` divergences: `-e` means Lua regexp and `-C` means color; prefer `--color` and document intentional differences.
+- [x] Fix `systemd`: capture exit code for `on-failure`; make `stopUnit` kill the service process group; remove shadowed `local lines`.
+- [x] Remove O(n²) concatenation in `vfsReadFile`, `bin/sh.lua`, `etc/profile.lua`, `bin/pastebin.lua`, and `lib/devfs.lua`; use chunk buffers.
+- [x] Deduplicate the symlink-scan block in `fsList`.
 
 ## P1 - Performance, memory, and engineering
 

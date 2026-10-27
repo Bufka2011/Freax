@@ -30,7 +30,7 @@ else
     local best, bestLen
     for _, d in ipairs(freax.fsDevices()) do
       local mnt = d.mount
-      if mnt and resolved:sub(1, #mnt) == mnt then
+      if mnt and (mnt == "/" or resolved == mnt or resolved:sub(1, #mnt + 1) == mnt .. "/") then
         if not bestLen or #mnt > bestLen then
           best = d
           bestLen = #mnt

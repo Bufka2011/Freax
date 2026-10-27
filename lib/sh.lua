@@ -196,33 +196,76 @@ local function positional(context, key)
   end
 end
 
+-- Data is not code: expansion is a single left-to-right scan, and every
+-- substituted value is inserted once, losing any special meaning. This
+-- rewrites the older 4-pass gsub chain, whose later passes re-expanded
+-- data produced by earlier ones (env value with ${HOME} became code) and
+-- misbehaved on values containing % (gsub replacement templates).
+-- \31 is the escape marker command substitution uses to mute $ in its
+-- captured output; see sh.internal.parse_sub.
+local SUBST_MUTER = "\31"
+
 function sh.expand(value, context)
-  local expanded = value
-  :gsub("%$(%d)", function(key)
-    return positional(context, key) or ""
-  end)
-  :gsub("%$([%?%#%@%*!])", function(key)
-    if key == "?" then
-      return tostring(sh.getLastExitCode())
+  local out = {}
+  local i, n = 1, #value
+  while i <= n do
+    local ch = value:sub(i, i)
+    if ch == SUBST_MUTER and value:sub(i + 1, i + 1) == "$" then
+      out[#out + 1] = "$" -- muted $ inside captured command output
+      i = i + 2
+    elseif ch ~= "$" then
+      out[#out + 1] = ch
+      i = i + 1
+    else
+      local nxt = value:sub(i + 1, i + 1)
+      if nxt == "{" then
+        local e = value:find("}", i + 2, true)
+        if e then
+          local key = value:sub(i + 2, e - 1)
+          local rep
+          if key == "?" then
+            rep = tostring(sh.getLastExitCode())
+          else
+            rep = positional(context, key)
+            if rep == nil then
+              if sh.internal.isIdentifier(key) then
+                rep = os.getenv(key) or ''
+              else
+                -- Never exit here: this runs inside the shell's own
+                -- process, so os.exit would kill the interactive shell
+                -- (it looked like a shell restart).
+                io.stderr:write("${" .. key .. "}: bad substitution\n")
+                rep = "${" .. key .. "}"
+              end
+            end
+          end
+          out[#out + 1] = rep
+          i = e + 1
+        else
+          out[#out + 1] = "$"
+          i = i + 1
+        end
+      else
+        local special = nxt:match("[?#@*!%d]")
+        local name = value:match("^([_%a][_%w]*)", i + 1)
+        if special then
+          if special == "?" then
+            out[#out + 1] = tostring(sh.getLastExitCode())
+          else
+            out[#out + 1] = positional(context, special) or ""
+          end
+          i = i + 2
+        elseif name then
+          out[#out + 1] = os.getenv(name) or ''
+          i = i + 1 + #name
+        else
+          out[#out + 1] = "$"
+          i = i + 1
+        end
+      end
     end
-    return positional(context, key) or ""
-  end)
-  :gsub("%$([_%a][_%w]*)", function(key)
-    return os.getenv(key) or ''
-  end)
-  :gsub("%${([^}]*)}", function(key)
-    if key == "?" then return tostring(sh.getLastExitCode()) end
-    local value = positional(context, key)
-    if value ~= nil then return value end
-    if sh.internal.isIdentifier(key) then
-      return os.getenv(key) or ''
-    end
-    -- Never exit here: this runs inside the shell's own process, so os.exit
-    -- would kill the interactive shell (it looked like a shell restart).
-    io.stderr:write("${" .. key .. "}: bad substitution\n")
-    return "${" .. key .. "}"
-  end)
-  return expanded
+  end
+  return table.concat(out)
 end
 
 local function completionAdd(out, seen, value, prefix)
@@ -939,6 +982,15 @@ function sh.internal.evaluate(words, context)
     words = text.internal.tokenize(command_text)
   end
 
+  -- anywhere a mute marker survives expansion, it guards data ($ inside
+  -- captured output, including quoted parts that skip expansion)
+  for _, word in ipairs(words) do
+    for _, part in ipairs(word) do
+      local t = part.txt
+      if t:find(SUBST_MUTER, 1, true) then part.txt = t:gsub(SUBST_MUTER, "") end
+    end
+  end
+
   local args = {}
   for _, word in ipairs(words) do
     if isExactAt(word) then
@@ -984,8 +1036,12 @@ function sh.internal.parse_sub(input, quotes)
     sub:close()
     if not result then error(tostring(rerr or "command substitution read failed"), 2) end
 
-    -- command substitution cuts trailing newlines
-    table.insert(packed, (result:gsub("\n+$", "")))
+    -- command substitution cuts trailing newlines; a `$` inside the captured
+    -- output is data, never a new expansion: mute it (the single-pass
+    -- sh.expand leaves muted text alone, evaluate strips the markers).
+    local muted = (result:gsub("\n+$", ""))
+    muted = muted:gsub("%$", function(d) return SUBST_MUTER .. d end)
+    table.insert(packed, muted)
     i = si + 1
   end
 

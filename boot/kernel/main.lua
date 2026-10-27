@@ -195,21 +195,23 @@ end
 
 -- forward: symlink expansion (defined below) used by vfsReadFile
 local expandLinks
--- read whole file via VFS (kernel-private, no fd leak; follows links)
+-- read whole file via VFS (kernel-private, no fd leak; follows links).
+-- Chunks collect into a parts list; one table.concat at the end. The old
+-- `data = data .. chunk` loop was O(n^2) garbage on big files (66K kernel).
 local function vfsReadFile(absPath)
   local exp = expandLinks(absPath, true) or absPath
   local proxy, rest = vfsResolve(exp)
   if not proxy then return nil end
   local ok, h = pcall(proxy.open, rest, "r")
   if not ok or not h then return nil end
-  local data = ""
+  local parts = {}
   while true do
     local rok, chunk = pcall(proxy.read, h, 4096)
     if not rok or not chunk then break end
-    data = data .. chunk
+    parts[#parts + 1] = chunk
   end
   pcall(proxy.close, h)
-  return data
+  return table.concat(parts)
 end
 
 ---------------------------------------------------------------
@@ -269,6 +271,20 @@ local function vfsLoad(absPath, chunkname, env)
   local fn, err = hostLoad(table.concat(parts), "=" .. tostring(chunkname), "t", env)
   if not fn then return nil, err end
   return fn
+end
+
+-- O(1)-ish existence test through the mount proxy's exists(): resolveProg
+-- used to read every PATH candidate just to learn whether one existed,
+-- which read whole files (kernel size) twice per lookup. Like vfsReadFile
+-- this follows links and ignores credentials: callers enforce policy.
+local function vfsExists(absPath)
+  local exp = expandLinks(absPath, true) or absPath
+  local proxy, rest = vfsResolve(exp)
+  if not proxy then return false end
+  if rest == "" then return true end -- mount point
+  if links[exp] then return true end
+  local ok, r = pcall(proxy.exists, rest)
+  return ok and r or false
 end
 
 ---------------------------------------------------------------
@@ -348,8 +364,29 @@ local function dupPipeFd(fd, newPid)
 end
 
 -- File/pipe handle shared by io.open, spawn stdio and wrapFd.
+-- Buffering: complete read chunks accumulate in `parts`; the string view
+-- (`h._buf`) is rebuilt by one table.concat only when a read must slice
+-- into buffered data. Whole-pipe/file reads then cost O(n) instead of the
+-- O(n^2) of rebuilding `h._buf .. chunk` on every 4K block (this buffer is
+-- what shell command substitution streams into).
 local function kernelNewHandle(fd, p)
   local h = { _fd = fd, _buf = "", _eof = false, _closed = false, _isfile = true }
+  local parts, pending = {}, 0
+  local sawNL = false
+  local function addChunk(chunk)
+    parts[#parts + 1] = chunk
+    pending = pending + #chunk
+    sawNL = sawNL or (chunk:find("\n", 1, true) ~= nil)
+  end
+  local function total()
+    return #h._buf + pending
+  end
+  local function flushParts()
+    if pending > 0 then
+      h._buf = h._buf .. table.concat(parts)
+      parts, pending, sawNL = {}, 0, false
+    end
+  end
   local function fillFile()
     if h._eof then return end
     local e = fds[fd]
@@ -357,13 +394,13 @@ local function kernelNewHandle(fd, p)
     if e.sock then
       local ok, chunk = pcall(e.sock.read, 4096)
       if not ok or not chunk then h._eof = true return end
-      h._buf = h._buf .. chunk
+      addChunk(chunk)
       return
     end
     if not e.proxy then h._eof = true return end
     local ok, chunk = pcall(e.proxy.read, e.h, 4096)
     if not ok or not chunk then h._eof = true return end
-    h._buf = h._buf .. chunk
+    addChunk(chunk)
   end
   local function fillPipe()
     if h._eof then return end
@@ -371,7 +408,7 @@ local function kernelNewHandle(fd, p)
     if not e or not e.pipe then h._eof = true return end
     local chunk = pipeRead(e.pipe, 4096, p)
     if not chunk then h._eof = true return end
-    h._buf = h._buf .. chunk
+    addChunk(chunk)
   end
   function h:read(fmt)
     if self._closed then return nil, "closed" end
@@ -380,22 +417,29 @@ local function kernelNewHandle(fd, p)
     fmt = fmt or "*l"
     local fill = e.pipe and fillPipe or fillFile
     if type(fmt) == "number" then
-      while #self._buf < fmt and not self._eof do fill() end
+      while #self._buf + pending < fmt and not self._eof do fill() end
+      flushParts()
       if #self._buf == 0 then return nil end
       local r = self._buf:sub(1, fmt)
       self._buf = self._buf:sub(#r + 1)
       return r
     elseif fmt == "*a" then
       while not self._eof do fill() end
+      flushParts()
       if #self._buf == 0 then return nil end
       local r = self._buf
       self._buf = ""
       return r
     elseif fmt == "*l" or fmt == "*L" then
-      while not self._eof do
-        if self._buf:find("\n", 1, true) then break end
+      -- one flush per line: fill until a chunk carried a newline (or EOF)
+      -- (existing buffered text can still hold later newlines, so string
+      -- search covers both fresh chunks and the string view)
+      while not self._eof and not sawNL
+        and self._buf:find("\n", 1, true) == nil do
         fill()
       end
+      flushParts()
+      sawNL = false
       if #self._buf == 0 then return nil end
       local i = self._buf:find("\n", 1, true)
       local r
@@ -722,6 +766,17 @@ local function ttyReadLine(p, mask, seed)
     for i = 1, #seed do termSt.hist[i] = tostring(seed[i]) end
     termSt.histPos = #termSt.hist + 1
   end
+  -- History size: HISTSIZE (set by /etc/profile.lua) bounds the shared
+  -- history list; clamp to a hard ceiling so unset/absurd values cannot
+  -- grow memory without limit. 0 disables history (bash-like).
+  local histCap = math.min(math.max(math.floor(
+    tonumber(type(p.vars) == "table" and p.vars.HISTSIZE) or 100), 0), 1000)
+  local function pushHistory(line)
+    if histCap <= 0 then return end
+    termSt.hist[#termSt.hist + 1] = line
+    while #termSt.hist > histCap do table.remove(termSt.hist, 1) end
+    termSt.histPos = #termSt.hist + 1
+  end
   ttyHideCursor()
   -- Capture the prompt text (everything before the input on this row) so a
   -- multi-match Tab can reprint prompt+input on a fresh line below the
@@ -773,6 +828,15 @@ local function ttyReadLine(p, mask, seed)
   local function uwidth(s)
     if hostUnicode then
       local ok, n = pcall(hostUnicode.wlen, s)
+      if ok and type(n) == "number" then return n end
+    end
+    return #s
+  end
+  local function uindex(s)
+    -- character count (not bytes) for cursor positions; uwidth is the
+    -- display width. Two helpers because multibyte chars can differ there.
+    if hostUnicode then
+      local ok, n = pcall(hostUnicode.len, s)
       if ok and type(n) == "number" then return n end
     end
     return #s
@@ -841,8 +905,7 @@ local function ttyReadLine(p, mask, seed)
         redraw()
         ttyNewline()
         if not echo then
-          termSt.hist[#termSt.hist + 1] = buf
-          termSt.histPos = #termSt.hist + 1
+          pushHistory(buf)
         end
         return buf
       end
@@ -865,7 +928,11 @@ local function ttyReadLine(p, mask, seed)
       local value = (type(char) == "string" and char)
         or (type(addr) == "string" and addr) or ""
       value = value:gsub("\r\n", "\n"):gsub("\r", "\n"):gsub("\t", "  ")
-      if value ~= "" then pasteQueue = pasteQueue .. value end
+      if value ~= "" then
+        -- bound the paste buffer: a huge clipboard must not OOM the machine
+        local room = 65536 - #pasteQueue
+        if room > 0 then pasteQueue = pasteQueue .. value:sub(1, room) end
+      end
     elseif name == "key_down" then
       if code == KEY_C and ctrlDown then
         -- Ctrl+C at a prompt: cancel the line, keep the shell alive.
@@ -898,8 +965,7 @@ local function ttyReadLine(p, mask, seed)
         redraw()
         ttyNewline()
         if not echo then
-          termSt.hist[#termSt.hist + 1] = buf
-          termSt.histPos = #termSt.hist + 1
+          pushHistory(buf)
         end
         return buf
       elseif code == 14 then                   -- backspace (before cursor)
@@ -942,18 +1008,18 @@ local function ttyReadLine(p, mask, seed)
         local before = pos > 0 and usub(buf, 1, pos) or ""
         local after = usub(buf, pos + 1)
         local afterWord = after:match("^%S*") or ""
-        local afterRest = usub(after, ulen(afterWord) + 1)
+        local afterRest = usub(after, uindex(afterWord) + 1)
         local okComp, matches = pcall(p.completer, before, pos + 1)
         if not okComp then matches = nil end
         if matches and #matches > 0 then
           local word = before:match("%S+$") or ""
-          local prefixLen = ulen(before) - ulen(word)
+          local prefixLen = uindex(before) - uindex(word)
           local prefix = prefixLen > 0 and usub(before, 1, prefixLen) or ""
           if #matches == 1 then
             local suffix = matches[1]:sub(-1) == "/" and "" or " "
             local completed = prefix .. matches[1] .. suffix
             buf = completed .. afterRest
-            pos = ulen(completed)
+            pos = uindex(completed)
             redraw()
           else
             redraw()
@@ -994,6 +1060,21 @@ end
 -- order across both queues is preserved via sequence numbers.
 local keyQueue = {}
 local sigSeq = 0
+-- Event queues must not grow without bound: cap the shared keystroke queue
+-- and every process' signal queue, dropping the OLDEST entries (Unix tty
+-- typeahead behavior). Caps are large enough that normal interactive use
+-- never loses a keystroke; only a wedge of input floods gets shed.
+local KEYQUEUE_MAX = 64
+local QUEUE_MAX = 32
+local function keyQueuePush(sig)
+  if #keyQueue >= KEYQUEUE_MAX then table.remove(keyQueue, 1) end
+  keyQueue[#keyQueue + 1] = sig
+end
+local function queuePush(p, sig)
+  local q = p.queue
+  if #q >= QUEUE_MAX then table.remove(q, 1) end
+  q[#q + 1] = sig
+end
 
 local function isKeySig(s)
   return s[1] == "key_down" or s[1] == "key_up" or s[1] == "clipboard"
@@ -1635,17 +1716,6 @@ local function makeEnv(p)
           for _, e in ipairs(out) do if e == nm or e == nm:sub(1,-2) then dup = true break end end
           if not dup then out[#out + 1] = nm end
         end
-      end
-    end
-    -- add virtual symlink children living directly under abs
-    for lp in pairs(links) do
-      if vfsDir(lp) == abs then
-        local nm = vfsName(lp)
-        local dup = false
-        for _, e in ipairs(out) do
-          if e == nm or e == nm .. "/" then dup = true break end
-        end
-        if not dup then out[#out + 1] = nm end
       end
     end
     -- add virtual symlink children living directly under abs
@@ -2347,6 +2417,22 @@ local function makeEnv(p)
   function freax.ttySize() return ttySize() end
   function freax.ttyReadLine(mask, seed) return ttyReadLine(p, mask, seed) end
   function freax.ttySetCompleter(fn) p.completer = fn end
+  -- Test-only key injection (root): injects a synthetic key/clipboard
+  -- event through computer.pushSignal, so it flows through the SAME
+  -- hardware signal path (sequence, Ctrl+C routing, queue caps) that real
+  -- keyboard events use. Lets selfcheck drive the interactive line editor
+  -- (Tab completion, editing keys) in game with no hardware in the loop.
+  function freax.injectKey(name, char, code)
+    if not isRoot(p) then return denied() end
+    name = tostring(name)
+    if name ~= "key_down" and name ~= "key_up" and name ~= "clipboard" then
+      return nil, "unsupported key signal"
+    end
+    local okA, addr = pcall(computer.address)
+    computer.pushSignal(name, okA and addr or "", tonumber(char) or 0,
+      tonumber(code) or 0)
+    return true
+  end
   -- Color state for the shared terminal. lib/tty maps ANSI SGR here so
   -- io.write/ttyWrite render in color; cursor rendering restores it.
   function freax.ttySetForeground(c, isPal)
@@ -2462,11 +2548,13 @@ local function makeEnv(p)
     end
   end
   -- Resolve a command name via PATH (shared by os.execute and io.popen).
+  -- vfsExists probes the mount proxy directly; reading each candidate file
+  -- (the kernel is 66K) cost ~6x the whole lookup per command spawn.
   local function resolveProg(prog)
     if prog:find("/") then return prog end
     for dir in string.gmatch(p.vars.PATH or "/bin", "[^:]+") do
       for _, cand in ipairs({ dir .. "/" .. prog .. ".lua", dir .. "/" .. prog }) do
-        if vfsReadFile(vfsAbs(cand, "/")) then return cand end
+        if vfsExists(vfsAbs(cand, "/")) then return cand end
       end
     end
     return nil
@@ -2496,37 +2584,54 @@ local function makeEnv(p)
   env.os = osProxy
 
   -- io: fd-backed files + shared-tty stdio (mirrors OpenOS io surface).
-  local function ioFill(h)
-    if h._eof then return end
-    local e = fds[h._fd]
-    if not e then h._eof = true return end
-    local ok, chunk = pcall(e.proxy.read, e.h, 4096)
-    if not ok or not chunk then h._eof = true return end
-    h._buf = h._buf .. chunk
-  end
+  -- Buffered like kernelNewHandle: chunks accumulate in parts and only
+  -- concat when a read slices (O(n) whole-file reads instead of O(n^2)).
   local function newHandle(fd)
     local h = { _fd = fd, _buf = "", _eof = false, _closed = false, _isfile = true }
+    local parts, pending, sawNL = {}, 0, false
+    local function addChunk(chunk)
+      parts[#parts + 1] = chunk
+      pending = pending + #chunk
+      sawNL = sawNL or (chunk:find("\n", 1, true) ~= nil)
+    end
+    local function flushParts()
+      if pending > 0 then
+        h._buf = h._buf .. table.concat(parts)
+        parts, pending, sawNL = {}, 0, false
+      end
+    end
+    local function ioFill()
+      if h._eof then return end
+      local e = fds[h._fd]
+      if not e then h._eof = true return end
+      local ok, chunk = pcall(e.proxy.read, e.h, 4096)
+      if not ok or not chunk then h._eof = true return end
+      addChunk(chunk)
+    end
     function h:read(fmt)
       if self._closed then return nil, "closed" end
       fmt = fmt or "*l"
       if type(fmt) == "number" then
-        while #self._buf < fmt and not self._eof do ioFill(self) end
+        while #self._buf + pending < fmt and not self._eof do ioFill() end
+        flushParts()
         if #self._buf == 0 then return nil end
         local r = self._buf:sub(1, fmt)
         self._buf = self._buf:sub(#r + 1)
         return r
       elseif fmt == "*a" then
-        while not self._eof do ioFill(self) end
+        while not self._eof do ioFill() end
+        flushParts()
         if #self._buf == 0 then return nil end
         local r = self._buf
         self._buf = ""
         return r
       elseif fmt == "*l" or fmt == "*L" then
-        while not self._eof do
-          local i = self._buf:find("\n", 1, true)
-          if i then break end
-          ioFill(self)
+        while not self._eof and not sawNL
+          and self._buf:find("\n", 1, true) == nil do
+          ioFill()
         end
+        flushParts()
+        sawNL = false
         if #self._buf == 0 then return nil end
         local i = self._buf:find("\n", 1, true)
         local r
@@ -2986,7 +3091,7 @@ function K.loop()
         elseif kname == "key_up" then
           if kcode == LC or kcode == RC then ctrlDown = false end
         end
-        if sig then keyQueue[#keyQueue + 1] = sig end
+        if sig then keyQueuePush(sig) end
       end
     end
     ttyCursorTick() -- block-cursor blink (GPU touched only on change)
@@ -3020,28 +3125,28 @@ function K.loop()
           -- don't drop input arriving on the exact start tick
           -- (non-key only; keys wait in the shared queue)
           if hasSig and not isKeySig(sig) and not p.waitingFor then
-            p.queue[#p.queue + 1] = sig
+            queuePush(p, sig)
           end
           ok, err = coroutine.resume(p.co)
         elseif p.stopped then
           -- suspended by STOP: take no CPU, but hold non-key input
           -- (typeahead) so it is there on CONT.
           if hasSig and not isKeySig(sig) then
-            p.queue[#p.queue + 1] = sig
+            queuePush(p, sig)
           end
         elseif p.waitingFor or p.pipeWait then
           -- foreground wait / pipe block: poll every tick.
           -- waiters still queue non-key input (typeahead); pipe blocks
           -- and all keystrokes bypass per-process queues entirely.
           if hasSig and not isKeySig(sig) and not p.pipeWait then
-            p.queue[#p.queue + 1] = sig
+            queuePush(p, sig)
           end
           ok, err = coroutine.resume(p.co)
         elseif hasSig then
           -- active process: keys come from the shared queue on pull,
           -- everything else broadcasts as before
           if not isKeySig(sig) then
-            p.queue[#p.queue + 1] = sig
+            queuePush(p, sig)
           end
           ok, err = coroutine.resume(p.co)
         else

@@ -3,9 +3,13 @@ local function out(s) io.write(tostring(s) .. "\n") end
 local shell = require("shell")
 
 local args, opts = shell.parse(...)
-if #args == 0 or opts.help then
+if opts.help or opts.h then
   out("Usage: which CMD...")
-  return 255
+  return 0
+end
+if #args == 0 then
+  out("Usage: which CMD...")
+  return 1
 end
 
 local ec = 0

@@ -230,8 +230,15 @@ builtins.kill = function(...)
     if a == "-s" or a == "--signal" then
       sig = argv[i + 1]
       i = i + 2
+    elseif a == "--help" or a == "-h" then
+      io.write("usage: kill [-s SIGNAL | -SIGNAL | -N] %JOB | PID...\n")
+      return 0
     elseif a:match("^%-[A-Za-z]") and not a:match("^%-%d+$") then
       sig = a:sub(2)
+      i = i + 1
+    elseif a:match("^%-%d+$") and sig == nil and #targets == 0 then
+      -- kill -9 123: a leading numeric option is the signal, not a pgid
+      sig = tonumber(a:sub(2))
       i = i + 1
     elseif a == "--" then
       i = i + 1
@@ -243,7 +250,7 @@ builtins.kill = function(...)
   end
   while i <= argv.n do targets[#targets + 1] = tostring(argv[i]) i = i + 1 end
   if #targets == 0 then
-    io.write("usage: kill [-s SIGNAL | -SIGNAL] %JOB | PID...\n")
+    io.stderr:write("usage: kill [-s SIGNAL | -SIGNAL | -N] %JOB | PID...\n")
     return 1
   end
   local code = 0
@@ -418,13 +425,14 @@ local profile = "/etc/profile.lua"
 if freax.fsExists(profile) then
   local f = freax.fsOpen(profile, "r")
   if f then
-    local content = ""
+    local parts = {}
     while true do
       local chunk = freax.fsRead(f, 4096)
       if not chunk then break end
-      content = content .. chunk
+      parts[#parts + 1] = chunk
     end
     freax.fsClose(f)
+    local content = table.concat(parts)
     if #content > 0 then
       local fn, err = load(content, profile)
       if fn then pcall(fn) end

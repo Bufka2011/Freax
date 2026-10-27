@@ -1,10 +1,17 @@
 NAME
-  grep - Search for PATTERN in each FILE or standard input. PATTERN is, by default, a Lua regular expression
+  grep - Search for PATTERN in each FILE or standard input. PATTERN is, by
+  default, a Lua regular expression (not POSIX/grep BRE/ERE syntax).
   Example: grep -i 'hello world' menu.lua main.lua
 
 OPTIONS
 Regexp selection and interpretation:
-  -e, --lua-regexp          PATTERN is a Lua regexp (default)
+  -e PATTERN                use PATTERN as the pattern; repeat to match any
+                            of several patterns. One per option argument
+                            (-e PAT) or attached to the option (-ePAT).
+                            With any -e/--regexp/--file given, the first
+                            positional argument is a FILE, not the pattern.
+      --regexp=PATTERN      same as -e PATTERN, long form
+      --lua-regexp          negates -F (switch back to Lua regexp matching)
   -F, --fixed-strings       PATTERN is a plain string
       --file=FILE           use newline separated PATTERNs from FILE
   -w, --word-regexp         force PATTERN to match only whole words
@@ -16,6 +23,7 @@ Miscellaneous:
   -s, --no-messages         suppress error messages
   -v, --invert-match        select non-matching lines
       --help                display help message and exit
+  -V, --version             display help message and exit
 
 Output control:
       --max-count=NUM       stop after NUM matches
@@ -28,7 +36,24 @@ Output control:
   -L, --files-without-match print only names of FILEs containing no match
   -l, --files-with-matches  print only names of FILEs containing matches
   -c, --count               print only a count of matching lines per FILE
-      --color, --colour     user markers to highlight the matching strings
+  -C, --color, --colour     user markers to highlight the matching strings
   -t, --trim                trim whitespace off results
 
-When FILE is -, read stdin. With no FILE, read - or ./ if a command line -r. If fewer than two FILEs are given, assume -h. Exit status is 0 if any line is selected, 1 otherwise. If any error occurs and -q is not given, the exit status is 2.
+DIVERGENCES FROM GNU grep
+  - Lua patterns are used for matching, not POSIX regexps: use %d . + - *
+    [sets] and Lua's (.)*() capture rules; anchors are ^ and $.
+  - -C is short for --color/always here (GNU reserves -C for --context);
+    --color is the portable spelling on this system.
+  - -a means "also match within binary-looking lines" here, not GNU's
+    --text passthrough.
+  - Last of -h/-H rarely wins when both are given with -r; -h normally
+    still suppresses names.
+  - Case-insensitive matching rewrites patterns into character classes
+    ([aA]); a pattern with a capture backreference (%1) may behave
+    unexpectedly combined with -i.
+
+When FILE is -, read stdin. With no FILE, read - or ./ if a command line -r.
+If fewer than two FILEs are given, assume -h. Recursive searches that expand
+to two or more files print the matching path as the file name. Exit status is
+0 if any line is selected, 1 otherwise. If any error occurs and -q is not
+given, the exit status is 2.

@@ -287,28 +287,40 @@ if not text.internal.reader then
   end
 
   function text.internal.writer(ostream, mode, append_txt)
+    -- Content accumulates as chunked parts and is concatenated ONCE on
+    -- close: the old `handle.txt = pre .. vs .. pos` rebuilt the whole
+    -- buffer on every write, which was quadratic for large captures.
+    -- Sequential writes (the normal case) are pure appends.
     local handle = {txt = "", len = 0, index = 0}
+    local parts = {}
     function handle.write(_, ...)
       if not handle.txt then
         return nil, "bad file descriptor"
       end
-      local pre = handle.txt:sub(1, handle.index)
-      local pos = handle.txt:sub(handle.index + 1)
       local vs = {}
       for _, v in ipairs({...}) do
         table.insert(vs, v)
       end
       vs = table.concat(vs)
-      handle.index = handle.index + #vs
-      handle.txt = pre .. vs .. pos
-      handle.len = string.len(handle.txt)
+      if vs ~= "" then
+        if handle.index == handle.len then
+          parts[#parts + 1] = vs
+        else
+          -- write before the end (reachable only after seek): compact and
+          -- rebuild the affected stream once, keeping the old semantics
+          local s = table.concat(parts)
+          parts = {s:sub(1, handle.index) .. vs .. s:sub(handle.index + 1)}
+        end
+        handle.index = handle.index + #vs
+        handle.len = handle.len + #vs
+      end
       return true
     end
     function handle.close(_)
       if not handle.txt then
         return nil, "bad file descriptor"
       end
-      ostream((append_txt or "") .. handle.txt)
+      ostream((append_txt or "") .. table.concat(parts))
       handle.txt = nil
       return true
     end

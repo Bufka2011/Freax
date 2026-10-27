@@ -29,20 +29,25 @@ local function readUnits()
   return units
 end
 
-if not cmd or cmd == "help" or opts.help then
-  io.write("Usage: systemctl <command> [name]\n")
-  io.write("Commands:\n")
-  io.write("  start NAME       start a service\n")
-  io.write("  stop NAME        stop a service\n")
-  io.write("  restart NAME     restart a service\n")
-  io.write("  status [NAME]    show service status\n")
-  io.write("  enable NAME      enable service at boot\n")
-  io.write("  disable NAME     disable service at boot\n")
-  io.write("  list-units       list all units\n")
-  io.write("  daemon-reload    reload unit files\n")
-  return
-end
+local usageText = [[Usage: systemctl <command> [name]
+Commands:
+  start NAME       start a service
+  stop NAME        stop a service
+  restart NAME     restart a service
+  status [NAME]    show service status
+  enable NAME      enable service at boot
+  disable NAME     disable service at boot
+  list-units       list all units
+  daemon-reload    reload unit files]]
 
+if not cmd then
+  io.stderr:write(usageText .. "\n")
+  return 1
+end
+if cmd == "help" or opts.help then
+  io.write(usageText .. "\n")
+  return 0
+end
 if cmd == "list-units" then
   for _, unit in ipairs(readUnits()) do
     io.write(string.format("%-20s %-15s %s\n", unit.name,
@@ -74,7 +79,7 @@ end
 if cmd == "daemon-reload" then cmd, name = "reload", "systemd" end
 
 if not name and cmd ~= "status" then
-  io.write("Usage: systemctl " .. cmd .. " NAME\n")
+  io.stderr:write("Usage: systemctl " .. cmd .. " NAME\n")
   return 1
 end
 

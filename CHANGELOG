@@ -11,6 +11,61 @@ release they built or repaired. Later sections are written as each release
 ships.
 
 
+1.12 - 2026-10-27
+------------------
+P0 bug-fix pack: shell interactivity, expansion safety, streaming I/O and
+exit-code hygiene. Also `vfsExists` for PATH lookups, bounded event/history
+queues, and a kernel key-injection hook for selfcheck.
+
+- Fixed the interactive Tab completion crash: the line editor used an
+  undefined global `ulen`; cursor positions now count characters with a new
+  local `uindex`, while display width keeps the existing `uwidth` helper.
+- `kill -9 123` works in `bin/kill.lua` and the shell builtin again: a
+  leading purely numeric option is the signal, not a process group. `kill -h`
+  prints help instead of being parsed as a signal.
+- `sh.expand` is now a single left-to-right pass: substituted values are
+  data, inserted exactly once, never re-expanded, and a `%` inside a value
+  can no longer corrupt the scan. Command substitution mutes `$` in captured
+  output behind a marker that `evaluate` strips, so quoted captured text
+  also stays data.
+- Bounded the event and history queues: the shared keystroke queue caps at
+  64, every process signal queue at 32 (both drop the oldest), terminal
+  history is bounded by `HISTSIZE` (0-1000, default 100) read from
+  `/etc/profile.lua`, and clipboard paste buffering caps at 64 KiB.
+- Added `freax.injectKey` (root): injects key events through the same
+  hardware signal path, so selfcheck drives Tab completion and line editing
+  without hardware.
+- Streaming I/O: `vfsReadFile`, kernel and io file handle read buffering,
+  the `.shrc` and `/etc/profile.lua` reads, `bin/pastebin.lua` upload, and
+  the devfs `text.internal.writer` accumulate chunks and join once instead
+  of quadratic string rebuilding.
+- Added kernel `vfsExists`; `resolveProg` probes PATH candidates by
+  existence instead of reading every candidate file whole.
+- Exit codes follow the GNU convention: `wget`, `cp`, `mv`, `systemctl`,
+  `which`, `man`, and `pastebin` usage and error paths return 1 instead of
+  0/nil/255, and `--help` returns 0. `cp`/`mv` with several sources and a
+  non-directory target fail with an error instead of clobbering; `man`
+  resolves the pager through PATH and falls back to a plain dump when the
+  pager (or an empty `PAGER`) has no binary.
+- `df` no longer matches a mount prefix like `/etc` against `/etcfoo`; the
+  mount point must equal the path or continue with a slash. `df` also
+  special-cases the `/` mount.
+- `tree` `-l` now formats `fs.lastModified` milliseconds as seconds before
+  `os.date`. `wc` counts bytes exactly for files without a trailing newline,
+  combines `-l`, `-w`, and `-c` in GNU column order, and prints a total with
+  any flag set. `sort -n` handles signed numbers. `ls -X` sorts ascending
+  and `ls -l` types regular files as `-`.
+- `grep -e PATTERN` (repeatable, `-ePAT` attached form included) and
+  `--regexp=PATTERN` specify the pattern like GNU grep; `--lua-regexp` now
+  actually parses. Divergences are documented in `usr/man/grep`.
+- `systemd` restarts `on-failure` units only when the exit status was
+  nonzero, `stopUnit` signals the whole service process group, the shadowed
+  `local lines` in the `status all` branch is gone, and the `status all`
+  listing is ordered by unit name.
+- `selfcheck.lua`: added injected-tab-completion, numeric `kill -9`, and
+  expansion-safety checks; usage-only invokes now assert exit 1.
+
+
 1.11 - 2026-09-26
 ------------------
 Ctrl+D end-of-input.

@@ -2,7 +2,8 @@ local fs = require("fs")
 local shell = require("shell")
 
 local args, opts = shell.parse(...)
-if #args < 2 or opts.help or opts.h then
+
+if opts.help or opts.h then
   io.write([[Usage: cp [OPTION]... SRC... DST
   -i            prompt before overwrite
   -f            force; never prompt
@@ -14,7 +15,14 @@ if #args < 2 or opts.help or opts.h then
   -v            verbose output
   --skip=PATH   skip the given (resolved) path
 ]])
-  return
+  return 0
+end
+
+if #args < 2 then
+  io.stderr:write("cp: missing file operand\n")
+  io.write([[Usage: cp [OPTION]... SRC... DST
+]])
+  return 1
 end
 
 local bForce = opts.f or opts.force
@@ -124,6 +132,13 @@ local dstRaw = table.remove(args)
 local dst = shell.resolve(dstRaw)
 local dstIsDir = fs.isDirectory(dst)
 local ec = 0
+
+-- With several sources the destination must be an existing directory:
+-- copying over it would silently clobber all but the last source.
+if #args > 1 and not dstIsDir then
+  io.stderr:write("cp: target '" .. dstRaw .. "' is not a directory\n")
+  return 1
+end
 
 for _, sRaw in ipairs(args) do
   local src = shell.resolve(sRaw)

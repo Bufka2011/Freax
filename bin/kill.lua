@@ -1,8 +1,11 @@
 -- kill: send a signal to processes or process groups.
--- Usage: kill [-s SIGNAL | -SIGNAL] PID...
+-- Usage: kill [-s SIGNAL | -SIGNAL | -N] PID...
 -- A negative id targets a process group (kill(-pgid)).
 -- Signals: TERM (default), KILL, INT, STOP, CONT, 0 (existence check),
--- or a signal number. Same-uid-or-root is enforced by the kernel.
+-- or a signal number (`kill -9 123` is the classic). Same-uid-or-root is
+-- enforced by the kernel. A numeric option counts as the signal only while
+-- no signal or target has been collected yet, so `kill -TERM -123` still
+-- signals a whole process group.
 local argv = table.pack(...)
 local sig, targets = nil, {}
 local i = 1
@@ -11,11 +14,18 @@ while i <= argv.n do
   if a == "-s" or a == "--signal" then
     sig = argv[i + 1]
     i = i + 2
+  elseif a == "--help" or a == "-h" then
+    io.write("Usage: kill [-s SIGNAL | -SIGNAL | -N] PID...\n")
+    return 0
   elseif a:match("^%-[A-Za-z]") and not a:match("^%-%d+$") then
     sig = a:sub(2)
     i = i + 1
+  elseif a:match("^%-%d+$") and sig == nil and #targets == 0 then
+    -- numeric first option is the signal (kill -9 123), not a pgid target
+    sig = tonumber(a:sub(2))
+    i = i + 1
   elseif a == "--help" or a == "-h" then
-    io.write("Usage: kill [-s SIGNAL | -SIGNAL] PID...\n")
+    io.write("Usage: kill [-s SIGNAL | -SIGNAL | -N] PID...\n")
     return 0
   elseif a == "--" then
     i = i + 1

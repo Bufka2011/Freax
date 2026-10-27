@@ -171,7 +171,7 @@ end
 
 local function formatTime(epochms)
   if epochms == 0 then return "" end
-  local d = os.date("*t", epochms)
+  local d = os.date("*t", math.floor(epochms / 1000))
   local day, hour, min, sec = nod(d.day), pad(nod(d.hour)), pad(nod(d.min)), pad(nod(d.sec))
   if opts["full-time"] then
     return string.format("%s-%s-%s %s:%s:%s ", d.year, pad(nod(d.month)), pad(day), hour, min, sec)
