@@ -66,10 +66,55 @@ check("expand data-not-code", sh.expand("$SC_DATA", shellContext)
   == "${HOME}%s%1")
 check("expand dollar-trailing", sh.expand("cost $", shellContext) == "cost $")
 -- command substitution output is data too: parse_sub mutes $ in captured
--- text so evaluate() never re-expands it (marker \31 is stripped later)
+-- text so evaluate() never re-expands it (marker \31 is stripped later).
+-- Do not fixate on the capture text: io.popen runs the program directly
+-- (no shell in between), so `echo '$HOME ninety'` captures the single
+-- quotes as-is. Probe what popen+echo really deliver, then verify the
+-- parse_sub invariants around it: one insertion, and every $ in the data
+-- sitting behind a mute marker.
+local probeProc = io.popen("echo '$HOME ninety'")
+local probeRaw = probeProc and probeProc:read("*a") or nil
+if probeProc then probeProc:close() end
+-- the capture text itself is not under test (popen styles vary), but a
+-- broken probe means the runtime cannot even run subcommands, so name it
+check("popen probe", probeProc ~= nil and probeRaw ~= nil and probeRaw ~= "")
+if not probeRaw or probeRaw == "" then
+  -- downstream checks would misattribute the failure; stop here
+  os.exit(1)
+end
+local expected = "x" .. (probeRaw:gsub("\n+$", "")) .. "y"
 local okSub, subbed = pcall(sh.internal.parse_sub, "x`echo '$HOME ninety'`y")
-check("cmdsub data-not-code", okSub ~= nil and okSub
-  and subbed:gsub("\31", "") == "x$HOME ninetyy")
+local subbedStripped = okSub and type(subbed) == "string"
+  and (subbed:gsub("\31", "")) or nil
+local marks, dollars
+if subbedStripped then
+  marks = (select(2, subbed:gsub("\31%$", "")))
+  dollars = (select(2, subbed:gsub("%$", "")))
+end
+local matched = okSub ~= nil and okSub
+  and subbedStripped == expected and dollars == marks
+local detail = ""
+if not matched then
+  detail = string.format(" (got %q, want %q)",
+    tostring(okSub and subbedStripped or subbed), tostring(expected))
+end
+check("cmdsub data-not-code" .. detail, matched)
+local okSub, subbed = pcall(sh.internal.parse_sub, "x`echo '$HOME ninety'`y")
+local subbedStripped = okSub and type(subbed) == "string"
+  and (subbed:gsub("\31", "")) or nil
+local marks, dollars
+if subbedStripped then
+  marks = (select(2, subbed:gsub("\31%$", "")))
+  dollars = (select(2, subbed:gsub("%$", "")))
+end
+local matched = expected ~= nil and okSub ~= nil and okSub
+  and subbedStripped == expected and dollars == marks
+local detail = ""
+if not matched then
+  detail = string.format(" (got %q, want %q)",
+    tostring(okSub and subbedStripped or subbed), tostring(expected))
+end
+check("cmdsub data-not-code" .. detail, matched)
 local parsed = sh.parseScript({
   "if ls /; then", "for x in \"$@\"; do", "echo $x", "done", "fi",
 })

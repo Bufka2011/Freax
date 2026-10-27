@@ -21,6 +21,13 @@ DESCRIPTION
   This program uses the OpenOS libraries (filesystem, component, internet,
   shell, term, computer) and does not run on Freax itself.
 
+  Downloads run through a small pool of coroutines (three files in flight
+  by default), so network time overlaps between fetches. Completed files
+  are reported as they land, in completion order rather than manifest
+  order. A failed fetch is retried once; if a worker gives up, the rest
+  of the queue finishes serially. Files are still streamed in chunks, so
+  RAM use does not grow with file size.
+
 OPTIONS
   --source=URL
     Base URL of the Freax repository. The default is the upstream

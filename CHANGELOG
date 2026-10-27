@@ -11,8 +11,26 @@ release they built or repaired. Later sections are written as each release
 ships.
 
 
+1.12.1 - 2026-10-27
+-------------------
+Hotfix: webinstall now installs files concurrently; selfcheck's command
+substitution check uses a probe instead of a fixed expectation.
+
+- webinstall downloads through a three-worker coroutine pool so several
+  files are in flight at once; parent directories are created up front by
+  the main thread, a failed fetch is retried once, progress lines report
+  completion order, and a worker that dies drains the remaining queue
+  serially. Streaming in chunks and temp-file + rename are unchanged.
+- selfcheck `cmdsub data-not-code` no longer assumes io.popen runs its
+  command through a shell: it probes what popen+echo actually delivered,
+  verifies the parse_sub invariants (one insertion, every $ behind the
+  mute marker), and names a broken popen as its own check. The old fixed
+  expectation assumed POSIX popen (a shell behind the pipe); Freax spawns
+  the program directly, so the check failed on every healthy 1.12 system.
+
+
 1.12 - 2026-10-27
-------------------
+-----------------
 P0 bug-fix pack: shell interactivity, expansion safety, streaming I/O and
 exit-code hygiene. Also `vfsExists` for PATH lookups, bounded event/history
 queues, and a kernel key-injection hook for selfcheck.

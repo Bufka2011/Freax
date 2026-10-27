@@ -248,28 +248,60 @@ if not (opts.yes or opts.y) then
   end
 end
 
+-- Downloads go through a small coroutine pool: everything runs inside one
+-- Lua VM, but each coroutine parks in pullSignal while its socket waits,
+-- so N fetches overlap their network time (the real cost per file).
+local WORKERS = 3
+
 local okN, failN, skipN = 0, 0, 0
 local fails = {}
-for i, dst in ipairs(files) do
+local jobs = {}
+for _, dst in ipairs(files) do
   if SKIP[dst] then
     skipN = skipN + 1
   else
-    local parent = fs.path(dst)
-    if parent and parent ~= "/" and parent ~= "" then
-      mkdirP(target.path, parent)
-    end
+    jobs[#jobs + 1] = dst
+  end
+end
+
+-- Create every target directory up front from the main thread: mkdirP
+-- loops from two workers could otherwise race makeDirectory on one dir.
+for _, dst in ipairs(jobs) do
+  local parent = fs.path(dst)
+  if parent and parent ~= "/" and parent ~= "" then
+    mkdirP(target.path, parent)
+  end
+end
+
+-- Each worker takes the next manifest entry and streams it to disk; the
+-- .webinstall-new temp name is per-destination, so no two workers touch
+-- the same temp file. State fields are only touched between coroutines,
+-- which is safe in a single-Lua-VM runtime.
+local state = { next = 1, done = 0 }
+local function workerLoop()
+  while true do
+    local i = state.next
+    state.next = state.next + 1
+    if i > #jobs then return end
+    local dst = jobs[i]
     local out = target.path .. dst
     local tmp = out .. ".webinstall-new"
-    io.write(string.format("[%d/%d] %s ", i, #files, dst))
     local ok, err = fetchFile(source .. dst:sub(2), tmp)
     if not ok then
-      io.write("FAIL: " .. tostring(err) .. "\n")
+      -- GitHub connections do occasionally reset mid-transfer: one retry
+      ok, err = fetchFile(source .. dst:sub(2), tmp)
+    end
+    -- 0-byte files are legitimate (.gitkeep); fetchFile already removed
+    -- the temp file on a real write error. temp + rename: a broken
+    -- transfer never clobbers a good file. Rename retries once with the
+    -- old file removed first, so a stale target cannot deadlock us.
+    state.done = state.done + 1
+    if not ok then
       failN = failN + 1
+      io.write(string.format("[%d/%d] %s FAIL: %s\n",
+        state.done, #jobs, dst, tostring(err)))
       fails[#fails + 1] = dst .. ": " .. tostring(err)
     else
-      -- 0-byte files are legitimate (.gitkeep); fetchFile already removed
-      -- the temp file on a real write error, so success means we're good.
-      -- temp + rename: a broken transfer never clobbers a good file
       local rok, rerr = fs.rename(tmp, out)
       if not rok then
         fs.remove(out)
@@ -277,12 +309,36 @@ for i, dst in ipairs(files) do
       end
       if not rok then
         fs.remove(tmp)
-        io.write("FAIL: " .. tostring(rerr) .. "\n")
         failN = failN + 1
+        io.write(string.format("[%d/%d] %s FAIL: %s\n",
+          state.done, #jobs, dst, tostring(rerr)))
         fails[#fails + 1] = dst .. ": " .. tostring(rerr)
       else
-        io.write("ok\n")
         okN = okN + 1
+        io.write(string.format("[%d/%d] %s ok\n", state.done, #jobs, dst))
+      end
+    end
+  end
+end
+
+-- Drive the workers round-robin; a worker parked in pullSignal returns as
+-- any queued signal lands (including chunks for the other fetches).
+local pool = {}
+for _ = 1, WORKERS do pool[#pool + 1] = coroutine.create(workerLoop) end
+local running = true
+while running do
+  running = false
+  for _, w in ipairs(pool) do
+    if coroutine.status(w) ~= "dead" then
+      running = true
+      local okW, errW = coroutine.resume(w)
+      if not okW then
+        -- a worker died inside its loop (should be impossible, but never
+        -- leave the rest unfetched): drain everything serially, contained
+        io.stderr:write("webinstall: download worker failed: " ..
+          tostring(errW) .. "\n")
+        pcall(workerLoop)
+        break
       end
     end
   end
