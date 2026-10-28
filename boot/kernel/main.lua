@@ -330,7 +330,17 @@ local function pipeWrite(st, data, p)
 end
 
 local function closeFdEntry(e)
-  if e.proxy then
+  if e.sharedRef then
+    -- fd shares an already-open OC handle with another fd's entry
+    -- (reopen fallback): only the last close releases the handle.
+    local pe = e.sharedRef
+    pe.openRefs = math.max((pe.openRefs or 1) - 1, 0)
+    if pe.openRefs == 0 then closeFdEntry(pe) end
+    return
+  elseif e.openRefs and e.openRefs > 1 then
+    e.openRefs = e.openRefs - 1
+    return
+  elseif e.proxy then
     pcall(e.proxy.close, e.h)
   elseif e.pipe then
     if e.pend == "w" then e.pipe.wopen = e.pipe.wopen - 1
@@ -2885,28 +2895,33 @@ function K.spawn(name, path, args, stdio, inh)
           local proxy, rest = vfsResolve(exp)
           if proxy and rest ~= "" then
             local ok, hnd = pcall(proxy.open, rest, e.mode or "r")
+            if not (ok and hnd) and K.klog then
+              K.klog("take: reopen nil path=" .. tostring(e.path) .. " mode="
+                .. tostring(e.mode or "r") .. " err=" .. tostring(hnd)
+                .. " silent=" .. tostring(ok) .. " (OC call budget?)")
+            end
+            if not (ok and hnd) then
+              -- In-game OC: direct fs.open exceeding the call budget returns
+              -- NOTHING (LimitReachedException -> no values, no message).
+              -- Yield one tick so the budget refills, then retry once.
+              coroutine.yield()
+              ok, hnd = pcall(proxy.open, rest, e.mode or "r")
+            end
             if ok and hnd then
               local fd = nextFd
               nextFd = nextFd + 1
               fds[fd] = { proxy = proxy, h = hnd, owner = p.pid,
-                path = e.path, mode = e.mode }
+                path = e.path, mode = e.mode, openRefs = 1 }
               return kernelNewHandle(fd, p)
             end
-            if K.klog then
-              local okr, h2, msgr = pcall(proxy.open, rest, "r")
-              local okE, ex = pcall(proxy.exists, rest)
-              local nOpen = 0
-              for _, fe in pairs(fds) do
-                if fe.proxy == proxy then nOpen = nOpen + 1 end
-              end
-              K.klog("take: reopen fail path=" .. tostring(e.path) .. " rest=" .. tostring(rest)
-                .. " mode=" .. tostring(e.mode or "r")
-                .. " retry-ropen=" .. tostring(okr and (h2 ~= nil or tostring(msgr)))
-                .. " rmsg=" .. tostring(msgr)
-                .. " exists=" .. tostring(okE and ex)
-                .. " nopen=" .. tostring(nOpen))
-              if okr and h2 then pcall(proxy.close, h2) end
-            end
+            -- Still nil: fall back to sharing the caller's already-open
+            -- handle; refcounting in closeFdEntry releases it once.
+            e.openRefs = (e.openRefs or 1) + 1
+            local fd = nextFd
+            nextFd = nextFd + 1
+            fds[fd] = { proxy = e.proxy, h = e.h, owner = p.pid,
+              path = e.path, mode = e.mode, sharedRef = e }
+            return kernelNewHandle(fd, p)
           else
             if K.klog then K.klog("take: resolve failed path=" .. tostring(e.path)
               .. " proxy=" .. tostring(proxy ~= nil) .. " rest=" .. tostring(rest)) end
