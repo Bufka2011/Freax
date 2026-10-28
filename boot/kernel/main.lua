@@ -2872,7 +2872,11 @@ function K.spawn(name, path, args, stdio, inh)
         end
         if e.pipe then
           local d = dupPipeFd(spec, p.pid)
-          return d and kernelNewHandle(d, p) or nil
+          if d then return kernelNewHandle(d, p) end
+          okAll = false
+          if K.klog then K.klog("take: pipe dup failed fd=" .. tostring(spec)
+            .. " caller=" .. tostring(p.pid)) end
+          return nil
         end
         -- file fd: reopen the same path for the child (independent
         -- offset/close; avoids shared-handle refcounting)
@@ -2888,8 +2892,21 @@ function K.spawn(name, path, args, stdio, inh)
                 path = e.path, mode = e.mode }
               return kernelNewHandle(fd, p)
             end
-            if K.klog then K.klog("take: reopen failed path=" .. tostring(e.path) .. " mode="
-              .. tostring(e.mode or "r") .. " err=" .. tostring(hnd)) end
+            if K.klog then
+              local okr, h2, msgr = pcall(proxy.open, rest, "r")
+              local okE, ex = pcall(proxy.exists, rest)
+              local nOpen = 0
+              for _, fe in pairs(fds) do
+                if fe.proxy == proxy then nOpen = nOpen + 1 end
+              end
+              K.klog("take: reopen fail path=" .. tostring(e.path) .. " rest=" .. tostring(rest)
+                .. " mode=" .. tostring(e.mode or "r")
+                .. " retry-ropen=" .. tostring(okr and (h2 ~= nil or tostring(msgr)))
+                .. " rmsg=" .. tostring(msgr)
+                .. " exists=" .. tostring(okE and ex)
+                .. " nopen=" .. tostring(nOpen))
+              if okr and h2 then pcall(proxy.close, h2) end
+            end
           else
             if K.klog then K.klog("take: resolve failed path=" .. tostring(e.path)
               .. " proxy=" .. tostring(proxy ~= nil) .. " rest=" .. tostring(rest)) end
