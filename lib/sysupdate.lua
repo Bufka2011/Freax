@@ -522,6 +522,11 @@ function sysupdate.upgrade(opts)
       skipN = skipN + 1
     elseif dst == "/SHA256SUMS" then
       skipN = skipN + 1 -- written from the fetched remote sums below
+    elseif dst == "/VERSION" or dst == "/manifest" then
+      -- State files: only written after every other file succeeded, so a
+      -- failed upgrade cannot leave a new VERSION behind and make the next
+      -- run report "Already up to date" with a half-updated tree.
+      skipN = skipN + 1
     else
       local want = sums and sums[dst]
       local needs

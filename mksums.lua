@@ -15,7 +15,10 @@ local function readFile(path)
   local f = assert(io.open(path, "rb"))
   local data = f:read("*a")
   f:close()
-  return data
+  -- Hash the LF form: git stores LF blobs, so the in-game updater downloads
+  -- LF bytes and hashes those. Hashing a CRLF working copy here would make
+  -- every Windows-regenerated index fail its own checksum check.
+  return (data:gsub("\r\n", "\n"))
 end
 
 local mf = assert(io.open("manifest", "r"))
