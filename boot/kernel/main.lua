@@ -2865,6 +2865,9 @@ function K.spawn(name, path, args, stdio, inh)
         local e = fds[spec]
         if not e or not inh or e.owner ~= inh.parent then
           okAll = false
+          if K.klog then K.klog("take: fd " .. tostring(spec) .. " unusable (e=" .. tostring(e ~= nil)
+            .. " inh=" .. tostring(inh ~= nil) .. " owner=" .. tostring(e and e.owner)
+            .. " parent=" .. tostring(inh and inh.parent) .. " caller=" .. tostring(p.pid)) end
           return nil
         end
         if e.pipe then
@@ -2885,7 +2888,15 @@ function K.spawn(name, path, args, stdio, inh)
                 path = e.path, mode = e.mode }
               return kernelNewHandle(fd, p)
             end
+            if K.klog then K.klog("take: reopen failed path=" .. tostring(e.path) .. " mode="
+              .. tostring(e.mode or "r") .. " err=" .. tostring(hnd)) end
+          else
+            if K.klog then K.klog("take: resolve failed path=" .. tostring(e.path)
+              .. " proxy=" .. tostring(proxy ~= nil) .. " rest=" .. tostring(rest)) end
           end
+        else
+          if K.klog then K.klog("take: fd " .. tostring(spec) .. " has no proxy/path (proxy="
+            .. tostring(e and e.proxy ~= nil) .. " path=" .. tostring(e and e.path) .. ")") end
         end
         okAll = false
         return nil
@@ -2896,6 +2907,8 @@ function K.spawn(name, path, args, stdio, inh)
         if (smode == "r" and not canReadPath(p, abs))
           or (smode ~= "r" and not canWritePath(p, abs)) then
           okAll = false
+          if K.klog then K.klog("take: table spec denied path=" .. tostring(spec[1]) .. " mode="
+            .. tostring(smode) .. " uid=" .. tostring(p.uid)) end
           return nil
         end
         local proxy, rest = vfsResolve(abs)
@@ -2908,7 +2921,14 @@ function K.spawn(name, path, args, stdio, inh)
               path = abs, mode = smode }
             return kernelNewHandle(fd, p)
           end
+          if K.klog then K.klog("take: table open failed path=" .. tostring(spec[1]) .. " mode="
+            .. tostring(smode) .. " err=" .. tostring(hnd)) end
+        else
+          if K.klog then K.klog("take: table resolve failed path=" .. tostring(spec[1])
+            .. " proxy=" .. tostring(proxy ~= nil) .. " rest=" .. tostring(rest)) end
         end
+      else
+        if K.klog then K.klog("take: bad spec type=" .. type(spec)) end
       end
       okAll = false
       return nil
@@ -2916,7 +2936,11 @@ function K.spawn(name, path, args, stdio, inh)
     p.ioT[1] = take(stdio[1] or stdio.in_, "r")
     p.ioT[2] = take(stdio[2] or stdio.out, "w")
     p.ioT[3] = take(stdio[3] or stdio.err, "w")
-    if not okAll then closeOwnedFds(p.pid) return nil, "bad stdio" end
+    if not okAll then
+      if K.klog then K.klog("spawnIO: bad stdio name=" .. tostring(name) .. " stdio=" .. tostring(stdio[1])
+        .. "," .. tostring(stdio[2]) .. "," .. tostring(stdio[3])) end
+      closeOwnedFds(p.pid) return nil, "bad stdio"
+    end
   end
   local env = makeEnv(p)
   -- resolve a relative program path against the caller's cwd, not /
